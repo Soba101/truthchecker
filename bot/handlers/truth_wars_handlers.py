@@ -45,6 +45,9 @@ async def start_truth_wars(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
     
     try:
+        # Set bot context for the manager (needed for sending phase transition messages)
+        truth_wars_manager.set_bot_context(context)
+        
         # Ensure user exists in database
         await ensure_user_exists(update.effective_user)
         
@@ -106,11 +109,14 @@ async def join_game_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await query.answer("❌ Invalid game link", show_alert=True)
             return
         
+        # Set bot context for the manager
+        truth_wars_manager.set_bot_context(context)
+        
         # Ensure user exists
         await ensure_user_exists(update.effective_user)
         
         # Attempt to join game
-        success, message = await truth_wars_manager.join_game(game_id, user_id)
+        success, message = await truth_wars_manager.join_game(game_id, user_id, user_name)
         
         if success:
             # Get game status for updated player count
@@ -203,6 +209,9 @@ async def start_game_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         except (IndexError, AttributeError):
             await query.answer("❌ Invalid game link", show_alert=True)
             return
+        
+        # Set bot context for the manager
+        truth_wars_manager.set_bot_context(context)
         
         # Get game status to check if user can start
         game_status = await truth_wars_manager.get_game_status(game_id)
@@ -358,6 +367,9 @@ async def vote_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     
     try:
+        # Set bot context for the manager
+        truth_wars_manager.set_bot_context(context)
+        
         # Process vote through game manager
         result = await truth_wars_manager.process_player_action(
             game_id, user_id, "vote", {"target_id": target_id}
@@ -439,6 +451,9 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     
     try:
+        # Set bot context for the manager
+        truth_wars_manager.set_bot_context(context)
+        
         # Check for pending notifications first
         notifications = await truth_wars_manager.get_pending_notifications(game_id)
         for notification in notifications:
@@ -614,6 +629,9 @@ async def handle_trust_vote(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
     
     try:
+        # Set bot context for the manager
+        truth_wars_manager.set_bot_context(context)
+        
         # Extract headline ID from callback data
         headline_id = query.data.split('_')[2]
         
@@ -621,7 +639,7 @@ async def handle_trust_vote(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         result = await truth_wars_manager.process_player_action(
             game_id, 
             user_id, 
-            "vote", 
+            "vote_headline", 
             {
                 "vote_type": "trust",
                 "headline_id": headline_id
@@ -658,6 +676,9 @@ async def handle_flag_vote(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
     
     try:
+        # Set bot context for the manager
+        truth_wars_manager.set_bot_context(context)
+        
         # Extract headline ID from callback data
         headline_id = query.data.split('_')[2]
         
@@ -665,7 +686,7 @@ async def handle_flag_vote(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         result = await truth_wars_manager.process_player_action(
             game_id, 
             user_id, 
-            "vote", 
+            "vote_headline", 
             {
                 "vote_type": "flag",
                 "headline_id": headline_id
@@ -744,6 +765,9 @@ async def trigger_game_progression(context: ContextTypes.DEFAULT_TYPE, game_id: 
     the game phases and sends necessary notifications to players.
     """
     try:
+        # Set bot context for the manager (critical for phase transition messages)
+        truth_wars_manager.set_bot_context(context)
+        
         logger.info(f"Starting game progression for game {game_id}")
         
         # Wait a moment for roles to be sent

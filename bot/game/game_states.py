@@ -261,7 +261,7 @@ class DiscussionPhase(GamePhase):
     def _on_start(self) -> Dict[str, Any]:
         """Start discussion."""
         return {
-            "message": "💬 **Discussion Time!**\n\n• Share your thoughts about the headline\n• Use your role abilities\n• Watch for suspicious behavior\n\n⏰ 5 minutes to discuss!",
+            "message": "💬 **Discussion Time!**\n\n• Share your thoughts about the headline\n• Vote TRUST or FLAG when you're ready\n• Use your role abilities\n• Watch for suspicious behavior\n\n⏰ 5 minutes to discuss (or until everyone votes)!",
             "discussion_active": True
         }
     
@@ -273,9 +273,10 @@ class DiscussionPhase(GamePhase):
         }
     
     def can_transition(self, game_state: Dict) -> Tuple[bool, Optional[PhaseType]]:
-        """Transition when time expires or all players ready."""
+        """Transition when time expires, all players ready, or all players have voted."""
         all_ready = game_state.get("all_players_ready", False)
-        return all_ready or self.is_expired(), PhaseType.VOTING
+        all_voted = game_state.get("all_players_voted", False)
+        return all_ready or all_voted or self.is_expired(), PhaseType.VOTING
     
     def handle_action(self, action_type: str, player_id: int, data: Any, game_state: Dict) -> Dict:
         """Handle discussion phase actions."""
@@ -286,6 +287,14 @@ class DiscussionPhase(GamePhase):
             return {"success": True, "ability_used": True}
         elif action_type == "ready":
             return {"success": True, "player_ready": True}
+        elif action_type == "vote_headline":
+            # Handle headline voting during discussion phase
+            vote_type = data.get("vote_type")
+            headline_id = data.get("headline_id")
+            if vote_type in ["trust", "flag"] and headline_id:
+                return {"success": True, "vote_type": vote_type, "headline_id": headline_id}
+            else:
+                return {"success": False, "message": "Invalid headline vote"}
         else:
             return {"success": False, "message": "Invalid action for discussion phase"}
 

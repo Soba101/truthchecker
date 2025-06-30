@@ -112,13 +112,14 @@ class TruthWarsManager:
             logger.error(f"Failed to create Truth Wars game - error: {str(e)}")
             raise
     
-    async def join_game(self, game_id: str, user_id: int) -> Tuple[bool, str]:
+    async def join_game(self, game_id: str, user_id: int, username: str = None) -> Tuple[bool, str]:
         """
         Add a player to an existing game.
         
         Args:
             game_id: ID of the game to join
             user_id: User ID of the player joining
+            username: Username of the player joining
             
         Returns:
             Tuple: (success, message)
@@ -156,6 +157,7 @@ class TruthWarsManager:
             # Add to session data
             game_session["players"][user_id] = {
                 "user_id": user_id,
+                "username": username or f"Player {user_id}",
                 "joined_at": datetime.utcnow()
             }
             
@@ -388,6 +390,8 @@ class TruthWarsManager:
             
             # Handle specific actions
             if action == "vote" and result.get("success"):
+                await self._handle_vote(game_session, user_id, data)
+            elif action == "vote_headline" and result.get("success"):
                 await self._handle_vote(game_session, user_id, data)
             elif action == "use_ability" and result.get("success"):
                 await self._handle_ability_use(game_session, user_id, data)
@@ -733,6 +737,222 @@ class TruthWarsManager:
                 "data": ability_result
             }
     
+    async def _handle_phase_transition(self, game_session: Dict, transition_result: Dict) -> None:
+        """Handle phase transition by sending appropriate messages to chat."""
+        try:
+            from ..handlers.truth_wars_handlers import send_headline_voting
+            
+            new_phase = transition_result["to_phase"]
+            start_result = transition_result.get("start_result", {})
+            message = start_result.get("message")
+            
+            if not message:
+                return
+                
+            # Get chat ID from bot context
+            chat_id = game_session.get("chat_id")
+            if not chat_id:
+                logger.error(f"No chat_id found for game {game_session.get('game_id')}")
+                return
+            
+            # Import bot context from handlers - this is a bit hacky but needed for now
+            # TODO: Pass bot context properly through the manager
+            bot_context = getattr(self, '_bot_context', None)
+            if not bot_context:
+                logger.warning("No bot context available for sending phase messages")
+                return
+            
+            # Send basic phase message
+            await bot_context.bot.send_message(
+                chat_id=chat_id,
+                text=message
+            )
+            
+            # Handle special cases for specific phases
+            if new_phase == "discussion":
+                # Send voting buttons for headline during discussion phase
+                current_headline = game_session.get("current_headline")
+                if current_headline:
+                    await send_headline_voting(bot_context, game_session["session_id"], current_headline)
+            
+            elif new_phase == "voting":
+                # Send player voting interface
+                alive_players = [
+                    player_data for pid, player_data in game_session["players"].items() 
+                    if pid not in game_session["eliminated_players"]
+                ]
+                if len(alive_players) > 1:  # Only if there are players to vote for
+                    await self._send_player_voting_interface(game_session, bot_context)
+            
+            elif new_phase == "resolution":
+                # Send headline resolution results
+                await self._send_headline_resolution(game_session, bot_context)
+                
+            elif new_phase == "game_end":
+                # Send final results and role reveals
+                await self._send_game_end_results(game_session, bot_context)
+                
+        except Exception as e:
+            logger.error(f"Failed to handle phase transition: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    async def _send_player_voting_interface(self, game_session: Dict, bot_context) -> None:
+        """Send interface for players to vote each other out."""
+        try:
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+            
+            alive_players = [
+                (pid, player_data) for pid, player_data in game_session["players"].items() 
+                if pid not in game_session["eliminated_players"]
+            ]
+            
+            if len(alive_players) <= 1:
+                return
+            
+            # Create voting buttons for each player
+            keyboard = []
+            for player_id, player_data in alive_players:
+                username = player_data.get("username", f"Player {player_id}")
+                button = InlineKeyboardButton(
+                    f"Vote {username}",
+                    callback_data=f"vote_player_{player_id}"
+                )
+                keyboard.append([button])
+            
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await bot_context.bot.send_message(
+                chat_id=game_session["chat_id"],
+                text="🗳️ **Vote for who you think is spreading misinformation:**",
+                reply_markup=reply_markup
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to send player voting interface: {e}")
+    
+    async def _send_headline_resolution(self, game_session: Dict, bot_context) -> None:
+        """Send headline resolution results showing truth/false and voting results."""
+        try:
+            current_headline = game_session.get("current_headline")
+            if not current_headline:
+                logger.warning("No current headline for resolution")
+                return
+                
+            votes = game_session.get("votes", {})
+            
+            # Build resolution message
+            headline_text = current_headline.get("text", "Unknown headline")
+            headline_is_real = current_headline.get("is_real", True)
+            explanation = current_headline.get("explanation", "No explanation available")
+            source = current_headline.get("source", "Unknown source")
+            
+            # Determine the correct answer and result
+            correct_answer = "TRUST" if headline_is_real else "FLAG"
+            truth_status = "✅ REAL" if headline_is_real else "❌ FAKE"
+            
+            resolution_text = f"📊 **HEADLINE RESOLUTION**\n\n"
+            resolution_text += f"📰 **Headline:** {headline_text}\n\n"
+            resolution_text += f"🎯 **Result:** {truth_status}\n"
+            resolution_text += f"✅ **Correct Answer:** {correct_answer}\n\n"
+            resolution_text += f"💡 **Explanation:**\n{explanation}\n\n"
+            resolution_text += f"🔗 **Source:** {source}\n\n"
+            
+            # Show voting results
+            resolution_text += "🗳️ **Voting Results:**\n"
+            
+            if votes:
+                trust_voters = []
+                flag_voters = []
+                
+                for voter_id, vote_data in votes.items():
+                    # Get username for the voter
+                    player_data = game_session["players"].get(voter_id, {})
+                    username = player_data.get("username", f"Player {voter_id}")
+                    
+                    if isinstance(vote_data, dict):
+                        vote_type = vote_data.get("vote_type")
+                        if vote_type == "trust":
+                            trust_voters.append(username)
+                        elif vote_type == "flag":
+                            flag_voters.append(username)
+                
+                # Show who voted what
+                if trust_voters:
+                    resolution_text += f"🟢 **TRUSTED** ({len(trust_voters)}): {', '.join(trust_voters)}\n"
+                else:
+                    resolution_text += "🟢 **TRUSTED** (0): No one\n"
+                    
+                if flag_voters:
+                    resolution_text += f"🔴 **FLAGGED** ({len(flag_voters)}): {', '.join(flag_voters)}\n"
+                else:
+                    resolution_text += "🔴 **FLAGGED** (0): No one\n"
+                    
+                # Show who was correct
+                resolution_text += "\n🎯 **Correct Votes:**\n"
+                correct_voters = trust_voters if headline_is_real else flag_voters
+                incorrect_voters = flag_voters if headline_is_real else trust_voters
+                
+                if correct_voters:
+                    resolution_text += f"✅ {', '.join(correct_voters)}\n"
+                else:
+                    resolution_text += "✅ No one voted correctly\n"
+                    
+                if incorrect_voters:
+                    resolution_text += f"❌ {', '.join(incorrect_voters)}\n"
+            else:
+                resolution_text += "No votes were cast this round.\n"
+            
+            await bot_context.bot.send_message(
+                chat_id=game_session["chat_id"],
+                text=resolution_text
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to send headline resolution: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    async def _send_game_end_results(self, game_session: Dict, bot_context) -> None:
+        """Send final game results and role reveals."""
+        try:
+            # Build final results message
+            results_text = "🎉 **GAME OVER - FINAL RESULTS**\n\n"
+            
+            # Show all player roles
+            results_text += "👥 **Role Reveals:**\n"
+            for player_id, player_data in game_session["players"].items():
+                username = player_data.get("username", f"Player {player_id}")
+                role_info = game_session["player_roles"].get(player_id, {})
+                
+                # Get role name from role object
+                role = role_info.get("role")
+                role_name = role.name if role else "Unknown"
+                faction = role_info.get("faction", "Unknown")
+                
+                status = "💀 Eliminated" if player_id in game_session["eliminated_players"] else "✅ Survived"
+                results_text += f"• {username}: {role_name} ({faction}) - {status}\n"
+            
+            # Show game statistics
+            results_text += f"\n📊 **Game Stats:**\n"
+            results_text += f"• Rounds played: {game_session['round_number']}\n"
+            results_text += f"• Players eliminated: {len(game_session['eliminated_players'])}\n"
+            
+            # TODO: Determine winning faction and show win/loss
+            results_text += "\n🎮 Type /truthwars to start a new game!"
+            
+            await bot_context.bot.send_message(
+                chat_id=game_session["chat_id"],
+                text=results_text
+            )
+            
+        except Exception as e:
+            logger.error(f"Failed to send game end results: {e}")
+    
+    def set_bot_context(self, bot_context) -> None:
+        """Set the bot context for sending messages."""
+        self._bot_context = bot_context
+    
     async def _game_loop(self, game_id: str) -> None:
         """
         Main game loop that handles automatic phase transitions.
@@ -758,6 +978,9 @@ class TruthWarsManager:
                     if transition_result:
                         new_phase = transition_result["to_phase"]
                         logger.info(f"Game {game_id} transitioned to phase: {new_phase}")
+                        
+                        # Send phase transition message to chat
+                        await self._handle_phase_transition(game_session, transition_result)
                         
                         # Handle specific phase transitions
                         if new_phase == "news":

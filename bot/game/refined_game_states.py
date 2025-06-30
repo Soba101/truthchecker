@@ -108,8 +108,9 @@ class RefinedGameStateMachine:
             return time_elapsed >= phase_time_limit
             
         elif self.current_phase == PhaseType.DISCUSSION:
-            # Always transition after 3 minutes
-            return time_elapsed >= phase_time_limit
+            # Transition after 3 minutes OR when all eligible players have voted
+            all_voted = game_state.get("all_eligible_voted", False)
+            return all_voted or time_elapsed >= phase_time_limit
             
         elif self.current_phase == PhaseType.VOTING:
             # Transition when all eligible players voted or time up
@@ -267,6 +268,8 @@ class RefinedGameStateMachine:
         elif self.current_phase == PhaseType.DISCUSSION:
             if action == "send_message":
                 return self._handle_discussion_message(player_id, data, game_state)
+            elif action == "vote_headline":
+                return self._handle_headline_vote(player_id, data, game_state)
         
         return {"success": False, "message": f"Action '{action}' not available in {self.current_phase.value} phase"}
     
@@ -285,7 +288,7 @@ class RefinedGameStateMachine:
         if game_state.get("shadow_banned_players", {}).get(player_id, False):
             return {"success": False, "message": "Shadow banned players cannot vote"}
         
-        vote_choice = vote_data.get("choice")  # "trust" or "flag"
+        vote_choice = vote_data.get("vote_type")  # "trust" or "flag"
         if vote_choice not in ["trust", "flag"]:
             return {"success": False, "message": "Vote must be 'trust' or 'flag'"}
         
