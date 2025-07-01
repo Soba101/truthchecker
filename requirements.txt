@@ -1,11 +1,8 @@
 # Core Bot Framework
 python-telegram-bot==21.5
-asyncio
 
-# Database
+# Database - SQLite for this project
 sqlalchemy==2.0.36
-alembic==1.13.3
-psycopg2-binary==2.9.9
 aiosqlite==0.19.0
 
 # Configuration Management
@@ -18,11 +15,9 @@ structlog==23.2.0
 colorama==0.4.6
 
 # Utilities
-redis==5.0.1
 python-dateutil==2.8.2
-uuid==1.30
 
-# Development and Testing
+# Development and Testing (optional for production)
 pytest==7.4.3
 pytest-asyncio==0.21.1
 pytest-cov==4.1.0
@@ -30,6 +25,6 @@ black==23.11.0
 flake8==6.1.0
 mypy==1.7.1
 
-# Production
+# Production Server (optional)
 gunicorn==21.2.0
 uvicorn==0.24.0 

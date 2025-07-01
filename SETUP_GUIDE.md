@@ -42,7 +42,7 @@ cp env.example .env
 **Required Configuration (.env file):**
 ```env
 TELEGRAM_BOT_TOKEN=your_bot_token_here
-DATABASE_URL=sqlite:///game_bot.db
+DATABASE_URL=sqlite+aiosqlite:///game.db
 DEBUG=true
 LOG_LEVEL=INFO
 ENVIRONMENT=development
@@ -128,7 +128,7 @@ pytest tests/ --cov=bot
 ## 📊 Database Setup
 
 The bot uses SQLite by default for development:
-- Database file: `game_bot.db` (created automatically)
+- Database file: `game.db` (created automatically)
 - Tables created automatically on first run
 - No manual setup required
 
@@ -174,7 +174,7 @@ DATABASE_URL=postgresql+asyncpg://user:password@localhost/gamebot
 **Database errors:**
 - Check file permissions for SQLite database
 - Verify DATABASE_URL in .env file
-- Try deleting `game_bot.db` to recreate
+- Try deleting `game.db` to recreate
 
 **Import errors:**
 - Ensure all dependencies are installed: `pip install -r requirements.txt`

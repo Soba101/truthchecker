@@ -27,7 +27,7 @@ class Settings:
         self.telegram_webhook_url: Optional[str] = os.getenv('TELEGRAM_WEBHOOK_URL')
         
         # Database Configuration
-        self.database_url: str = os.getenv('DATABASE_URL', 'sqlite:///game_bot.db')
+        self.database_url: str = os.getenv('DATABASE_URL', 'sqlite+aiosqlite:///game.db')
         
         # Redis Configuration (optional)
         self.redis_url: Optional[str] = os.getenv('REDIS_URL')

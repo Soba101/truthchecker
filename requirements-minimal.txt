@@ -1,5 +1,0 @@
-# Core Bot Framework - minimal dependencies
-python-telegram-bot==21.5
-python-dotenv==1.0.0
-sqlalchemy==2.0.36
-aiosqlite==0.19.0 

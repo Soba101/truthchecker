@@ -15,12 +15,17 @@ import uuid
 from datetime import datetime
 from typing import Optional, List
 from sqlalchemy import Column, String, Integer, BigInteger, Boolean, DateTime, ForeignKey, Text, JSON, Float, Enum
-from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import enum
 
 from .database import Base
+
+
+# Use String for UUID storage since we're using SQLite
+def generate_uuid():
+    """Generate a UUID string for SQLite compatibility."""
+    return str(uuid.uuid4())
 
 
 # Enums for consistent data types
@@ -156,8 +161,8 @@ class Game(Base):
     """
     __tablename__ = "games"
     
-    # Primary key
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, doc="Unique game ID")
+    # Primary key - using String for SQLite compatibility
+    id = Column(String(36), primary_key=True, default=generate_uuid, doc="Unique game ID")
     
     # Game configuration
     game_type = Column(String(50), nullable=False, default="truth_wars", doc="Type of game")
@@ -235,10 +240,10 @@ class GamePlayer(Base):
     __tablename__ = "game_players"
     
     # Primary key
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, doc="Unique player record ID")
+    id = Column(String(36), primary_key=True, default=generate_uuid, doc="Unique player record ID")
     
     # Foreign keys
-    game_id = Column(UUID(as_uuid=True), ForeignKey("games.id"), nullable=False, doc="Game ID")
+    game_id = Column(String(36), ForeignKey("games.id"), nullable=False, doc="Game ID")
     user_id = Column(BigInteger, ForeignKey("users.id"), nullable=False, doc="User ID")
     
     # Reputation system (core mechanic of refined system)
@@ -308,7 +313,7 @@ class TruthWarsGame(Base):
     __tablename__ = "truth_wars_games"
     
     # Primary key - links to main game record
-    game_id = Column(UUID(as_uuid=True), ForeignKey("games.id"), primary_key=True, doc="Main game ID")
+    game_id = Column(String(36), ForeignKey("games.id"), primary_key=True, doc="Main game ID")
     
     # Refined game state
     current_phase = Column(Enum(GamePhase), default=GamePhase.LOBBY, doc="Current game phase")
@@ -330,7 +335,7 @@ class TruthWarsGame(Base):
     next_snipe_round = Column(Integer, default=2, doc="Next round when snipes will be available")
     
     # Content and difficulty progression
-    current_headline_id = Column(UUID(as_uuid=True), ForeignKey("headlines.id"), nullable=True, doc="Active headline ID")
+    current_headline_id = Column(String(36), ForeignKey("headlines.id"), nullable=True, doc="Active headline ID")
     difficulty_progression = Column(JSON, default=lambda: ["easy", "medium", "medium", "hard", "hard"], doc="Difficulty for each round")
     
     # Game configuration
@@ -360,10 +365,10 @@ class PlayerRole(Base):
     __tablename__ = "player_roles"
     
     # Primary key
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, doc="Unique role record ID")
+    id = Column(String(36), primary_key=True, default=generate_uuid, doc="Unique role record ID")
     
     # Foreign keys
-    game_player_id = Column(UUID(as_uuid=True), ForeignKey("game_players.id"), nullable=False, doc="Game player ID")
+    game_player_id = Column(String(36), ForeignKey("game_players.id"), nullable=False, doc="Game player ID")
     
     # Role information for refined system
     role_name = Column(String(50), nullable=False, doc="Role name (fact_checker, scammer, influencer, drunk, normie)")
@@ -419,7 +424,7 @@ class Headline(Base):
     __tablename__ = "headlines"
     
     # Primary key
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, doc="Unique headline ID")
+    id = Column(String(36), primary_key=True, default=generate_uuid, doc="Unique headline ID")
     
     # Headline content
     text = Column(Text, nullable=False, doc="The headline text")
@@ -492,11 +497,11 @@ class PlayerReputationHistory(Base):
     __tablename__ = "player_reputation_history"
     
     # Primary key
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, doc="Unique record ID")
+    id = Column(String(36), primary_key=True, default=generate_uuid, doc="Unique record ID")
     
     # Foreign keys
     user_id = Column(BigInteger, ForeignKey("users.id"), nullable=False, doc="User ID")
-    game_player_id = Column(UUID(as_uuid=True), ForeignKey("game_players.id"), nullable=False, doc="Game player ID")
+    game_player_id = Column(String(36), ForeignKey("game_players.id"), nullable=False, doc="Game player ID")
     
     # Reputation change details
     round_number = Column(Integer, nullable=False, doc="Round when change occurred")
@@ -506,7 +511,7 @@ class PlayerReputationHistory(Base):
     
     # Reason for change
     change_reason = Column(String(100), nullable=False, doc="Why RP changed (correct_vote, incorrect_vote, etc.)")
-    headline_id = Column(UUID(as_uuid=True), ForeignKey("headlines.id"), nullable=True, doc="Related headline if applicable")
+    headline_id = Column(String(36), ForeignKey("headlines.id"), nullable=True, doc="Related headline if applicable")
     
     # Context
     player_vote = Column(Enum(VoteType), nullable=True, doc="What the player voted")
@@ -533,12 +538,12 @@ class HeadlineVote(Base):
     __tablename__ = "headline_votes"
     
     # Primary key
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, doc="Unique vote ID")
+    id = Column(String(36), primary_key=True, default=generate_uuid, doc="Unique vote ID")
     
     # Foreign keys
-    game_id = Column(UUID(as_uuid=True), ForeignKey("games.id"), nullable=False, doc="Game ID")
+    game_id = Column(String(36), ForeignKey("games.id"), nullable=False, doc="Game ID")
     user_id = Column(BigInteger, ForeignKey("users.id"), nullable=False, doc="Voter ID")
-    headline_id = Column(UUID(as_uuid=True), ForeignKey("headlines.id"), nullable=False, doc="Headline ID")
+    headline_id = Column(String(36), ForeignKey("headlines.id"), nullable=False, doc="Headline ID")
     
     # Vote details for refined system
     vote = Column(Enum(VoteType), nullable=False, doc="TRUST or FLAG vote")
@@ -577,11 +582,11 @@ class RoundResult(Base):
     __tablename__ = "round_results"
     
     # Primary key
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, doc="Unique round result ID")
+    id = Column(String(36), primary_key=True, default=generate_uuid, doc="Unique round result ID")
     
     # Foreign keys
-    game_id = Column(UUID(as_uuid=True), ForeignKey("games.id"), nullable=False, doc="Game ID")
-    headline_id = Column(UUID(as_uuid=True), ForeignKey("headlines.id"), nullable=False, doc="Headline used")
+    game_id = Column(String(36), ForeignKey("games.id"), nullable=False, doc="Game ID")
+    headline_id = Column(String(36), ForeignKey("headlines.id"), nullable=False, doc="Headline used")
     
     # Round information
     round_number = Column(Integer, nullable=False, doc="Round number (1-5)")
@@ -645,11 +650,11 @@ class ShadowBanHistory(Base):
     __tablename__ = "shadow_ban_history"
     
     # Primary key
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, doc="Unique shadow ban record ID")
+    id = Column(String(36), primary_key=True, default=generate_uuid, doc="Unique shadow ban record ID")
     
     # Foreign keys
-    game_id = Column(UUID(as_uuid=True), ForeignKey("games.id"), nullable=False, doc="Game ID")
-    snipe_action_id = Column(UUID(as_uuid=True), ForeignKey("snipe_actions.id"), nullable=False, doc="Related snipe action")
+    game_id = Column(String(36), ForeignKey("games.id"), nullable=False, doc="Game ID")
+    snipe_action_id = Column(String(36), ForeignKey("snipe_actions.id"), nullable=False, doc="Related snipe action")
     banned_player_id = Column(BigInteger, ForeignKey("users.id"), nullable=False, doc="Player who was shadow banned")
     
     # Shadow ban details
@@ -684,10 +689,10 @@ class SnipeAction(Base):
     __tablename__ = "snipe_actions"
     
     # Primary key
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, doc="Unique snipe action ID")
+    id = Column(String(36), primary_key=True, default=generate_uuid, doc="Unique snipe action ID")
     
     # Foreign keys
-    game_id = Column(UUID(as_uuid=True), ForeignKey("games.id"), nullable=False, doc="Game ID")
+    game_id = Column(String(36), ForeignKey("games.id"), nullable=False, doc="Game ID")
     sniper_id = Column(BigInteger, ForeignKey("users.id"), nullable=False, doc="Player who used snipe")
     target_id = Column(BigInteger, ForeignKey("users.id"), nullable=False, doc="Player who was targeted")
     
@@ -733,12 +738,12 @@ class HeadlineUsage(Base):
     __tablename__ = "headline_usage"
     
     # Primary key
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, doc="Unique usage record ID")
+    id = Column(String(36), primary_key=True, default=generate_uuid, doc="Unique usage record ID")
     
     # Foreign keys
-    headline_id = Column(UUID(as_uuid=True), ForeignKey("headlines.id"), nullable=False, doc="Headline ID")
-    game_id = Column(UUID(as_uuid=True), ForeignKey("games.id"), nullable=False, doc="Game ID")
-    round_result_id = Column(UUID(as_uuid=True), ForeignKey("round_results.id"), nullable=False, doc="Round result ID")
+    headline_id = Column(String(36), ForeignKey("headlines.id"), nullable=False, doc="Headline ID")
+    game_id = Column(String(36), ForeignKey("games.id"), nullable=False, doc="Game ID")
+    round_result_id = Column(String(36), ForeignKey("round_results.id"), nullable=False, doc="Round result ID")
     
     # Usage context
     round_number = Column(Integer, nullable=False, doc="Round when headline was used")
@@ -781,11 +786,11 @@ class MediaLiteracyAnalytics(Base):
     __tablename__ = "media_literacy_analytics"
     
     # Primary key
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, doc="Unique analytics record ID")
+    id = Column(String(36), primary_key=True, default=generate_uuid, doc="Unique analytics record ID")
     
     # Foreign keys
     user_id = Column(BigInteger, ForeignKey("users.id"), nullable=False, doc="User ID")
-    game_id = Column(UUID(as_uuid=True), ForeignKey("games.id"), nullable=True, doc="Game ID (if game-specific)")
+    game_id = Column(String(36), ForeignKey("games.id"), nullable=True, doc="Game ID (if game-specific)")
     
     # Learning metrics
     concepts_learned = Column(JSON, default=list, doc="Media literacy concepts learned")
@@ -832,10 +837,10 @@ class DrunkRoleAssignment(Base):
     __tablename__ = "drunk_role_assignments"
     
     # Primary key
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, doc="Unique assignment record ID")
+    id = Column(String(36), primary_key=True, default=generate_uuid, doc="Unique assignment record ID")
     
     # Foreign keys
-    game_id = Column(UUID(as_uuid=True), ForeignKey("games.id"), nullable=False, doc="Game ID")
+    game_id = Column(String(36), ForeignKey("games.id"), nullable=False, doc="Game ID")
     player_id = Column(BigInteger, ForeignKey("users.id"), nullable=False, doc="Player who is/was Drunk")
     
     # Assignment details

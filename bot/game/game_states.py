@@ -259,9 +259,9 @@ class DiscussionPhase(GamePhase):
         super().__init__(PhaseType.DISCUSSION, duration_seconds=180)  # 3 minutes
     
     def _on_start(self) -> Dict[str, Any]:
-        """Start discussion."""
+        """Start discussion - message now combined with headline."""
         return {
-            "message": "💬 **Discussion Time!**\n\n• Share your thoughts about the headline\n• Vote TRUST or FLAG when you're ready\n• Use your role abilities\n• Watch for suspicious behavior\n\n⏰ 3 minutes to discuss (or until everyone votes)!",
+            "message": "",  # Empty since headline message now includes discussion instructions
             "discussion_active": True
         }
     

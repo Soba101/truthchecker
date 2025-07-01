@@ -732,7 +732,7 @@ async def send_headline_voting(context: ContextTypes.DEFAULT_TYPE, game_id: str,
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        # Format headline message
+        # Format combined headline and discussion message
         headline_message = (
             f"📰 **BREAKING NEWS**\n\n"
             f"**Headline:** {headline['text']}\n\n"
@@ -740,7 +740,12 @@ async def send_headline_voting(context: ContextTypes.DEFAULT_TYPE, game_id: str,
             f"🤔 **What do you think?**\n"
             f"• **TRUST** = You believe this is real news\n"
             f"• **FLAG** = You think this is fake/misleading\n\n"
-            f"💬 **Discuss with your team before voting!**"
+            f"💬 **Discussion Time!**\n"
+            f"• Share your thoughts about the headline\n"
+            f"• Vote TRUST or FLAG when you're ready\n"
+            f"• Use your role abilities\n"
+            f"• Watch for suspicious behavior\n\n"
+            f"⏰ 3 minutes to discuss (or until everyone votes)!"
         )
         
         # Send headline to chat
