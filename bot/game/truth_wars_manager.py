@@ -123,7 +123,11 @@ class TruthWarsManager:
                 },
                 
                 # Fact Checker balance - one round without info
-                "fact_checker_no_info_round": None  # Will be set to random round 1-5
+                "fact_checker_no_info_round": None,  # Will be set to random round 1-5
+                
+                # Shadow ban system tracking
+                "shadow_banned_players": {},  # {player_id: rounds_remaining}
+                "snipe_abilities_used": []  # Track which players used snipe abilities
             }
             
             # Start the lobby phase
@@ -624,8 +628,13 @@ class TruthWarsManager:
     
     async def _start_news_phase(self, game_session: Dict) -> None:
         """Start a new news phase with a fresh headline."""
-        # Rotate drunk role to next normie (if not round 1)
         current_round = game_session["round_number"]
+        
+        # Reduce shadow ban durations at start of new round
+        if current_round > 1:
+            self._reduce_shadow_ban_durations(game_session)
+        
+        # Rotate drunk role to next normie (if not round 1)
         if current_round > 1:
             await self._rotate_drunk_role(game_session)
         
@@ -755,55 +764,103 @@ class TruthWarsManager:
             logger.info(f"Game {game_session['game_id']}: Truth Team won - 3 fake headlines flagged")
             return True
         
-        # Truth team win: 5 rounds completed
+        # 5 rounds completed: Calculate RP totals for each faction
         if win_progress["rounds_completed"] >= 5:
-            game_session["winner"] = "truth_seekers"
-            game_session["win_reason"] = "5 rounds completed without Scammer victory"
-            logger.info(f"Game {game_session['game_id']}: Truth Team won - 5 rounds completed")
-            return True
+            return self._calculate_rp_based_victory(game_session)
         
-        # Check elimination-based backup win conditions
-        alive_players = [pid for pid in game_session["players"].keys() 
-                        if pid not in game_session["eliminated_players"]]
-        
-        # Don't check elimination win conditions if we have less than 2 players
-        # This prevents single-player games from immediately ending
-        if len(alive_players) >= 2:
-            alive_truth_seekers = 0
-            alive_misinformers = 0
-            
-            for player_id in alive_players:
-                role_info = game_session["player_roles"].get(player_id)
-                if role_info:
-                    if role_info["faction"] == "truth_seekers":
-                        alive_truth_seekers += 1
-                    elif role_info["faction"] == "misinformers":
-                        alive_misinformers += 1
-            
-            # Truth Seekers win if all Misinformers eliminated (but only if there were Misinformers to begin with)
-            if alive_misinformers == 0 and alive_truth_seekers > 0:
-                # Check if there were actually Misinformers in the game to begin with
-                total_misinformers = 0
-                for player_id in game_session["players"].keys():
-                    role_info = game_session["player_roles"].get(player_id)
-                    if role_info and role_info["faction"] == "misinformers":
-                        total_misinformers += 1
-                
-                # Only trigger this win condition if there were actually Misinformers in the game
-                if total_misinformers > 0:
-                    game_session["winner"] = "truth_seekers"
-                    game_session["win_reason"] = "All Scammers eliminated"
-                    logger.info(f"Game {game_session['game_id']}: Truth Team won - all Scammers eliminated")
-                    return True
-                    
-            # Misinformers win if all Truth Seekers eliminated
-            if alive_truth_seekers == 0 and alive_misinformers > 0:
-                game_session["winner"] = "misinformers"
-                game_session["win_reason"] = "All Truth Seekers eliminated"
-                logger.info(f"Game {game_session['game_id']}: Scammers won - all Truth Seekers eliminated")
-                return True
+        # Check shadow ban-based win conditions (all scammers banned)
+        return self._check_shadow_ban_win_conditions(game_session)
         
         return False
+    
+    def _calculate_rp_based_victory(self, game_session: Dict) -> bool:
+        """Calculate faction victory based on total RP after 5 rounds."""
+        try:
+            truth_seekers_rp = 0
+            misinformers_rp = 0
+            
+            # Calculate total RP for each faction
+            for player_id, reputation in game_session["player_reputation"].items():
+                role_info = game_session["player_roles"].get(player_id)
+                if role_info:
+                    faction = role_info.get("faction")
+                    if faction == "truth_seekers":
+                        truth_seekers_rp += reputation
+                    elif faction == "misinformers":
+                        misinformers_rp += reputation
+            
+            # Determine winner based on total RP
+            if truth_seekers_rp > misinformers_rp:
+                game_session["winner"] = "truth_seekers"
+                game_session["win_reason"] = f"Truth Team won after 5 rounds: {truth_seekers_rp} RP vs {misinformers_rp} RP"
+                logger.info(f"Game {game_session['game_id']}: Truth Team won by RP - {truth_seekers_rp} vs {misinformers_rp}")
+                return True
+            elif misinformers_rp > truth_seekers_rp:
+                game_session["winner"] = "misinformers"
+                game_session["win_reason"] = f"Scammers won after 5 rounds: {misinformers_rp} RP vs {truth_seekers_rp} RP"
+                logger.info(f"Game {game_session['game_id']}: Scammers won by RP - {misinformers_rp} vs {truth_seekers_rp}")
+                return True
+            else:
+                # Tie goes to Truth Team (default win condition)
+                game_session["winner"] = "truth_seekers"
+                game_session["win_reason"] = f"Truth Team won after 5 rounds (tie): {truth_seekers_rp} RP each"
+                logger.info(f"Game {game_session['game_id']}: Truth Team won by tiebreaker - {truth_seekers_rp} RP each")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Failed to calculate RP-based victory: {e}")
+            # Default to Truth Team win if calculation fails
+            game_session["winner"] = "truth_seekers"
+            game_session["win_reason"] = "Truth Team won after 5 rounds (calculation error)"
+            return True
+    
+    def _check_shadow_ban_win_conditions(self, game_session: Dict) -> bool:
+        """Check if all scammers are shadow banned (Truth Team wins)."""
+        try:
+            shadow_banned_players = game_session.get("shadow_banned_players", {})
+            
+            # Count active players by faction (not shadow banned and not ghost viewers)
+            active_truth_seekers = 0
+            active_misinformers = 0
+            total_misinformers = 0
+            
+            for player_id, role_info in game_session["player_roles"].items():
+                if not role_info:
+                    continue
+                    
+                faction = role_info.get("faction")
+                player_rp = game_session["player_reputation"].get(player_id, 3)
+                is_shadow_banned = player_id in shadow_banned_players and shadow_banned_players[player_id] > 0
+                
+                if faction == "truth_seekers":
+                    # Truth seeker is active if they have RP > 0 and are not shadow banned
+                    if player_rp > 0 and not is_shadow_banned:
+                        active_truth_seekers += 1
+                elif faction == "misinformers":
+                    total_misinformers += 1
+                    # Misinformer is active if they have RP > 0 and are not shadow banned
+                    if player_rp > 0 and not is_shadow_banned:
+                        active_misinformers += 1
+            
+            # Truth Team wins if all Scammers are shadow banned or have 0 RP
+            if total_misinformers > 0 and active_misinformers == 0 and active_truth_seekers > 0:
+                game_session["winner"] = "truth_seekers"
+                game_session["win_reason"] = "All Scammers shadow banned or eliminated"
+                logger.info(f"Game {game_session['game_id']}: Truth Team won - all Scammers neutralized")
+                return True
+                
+            # Scammers win if all Truth Seekers are shadow banned or have 0 RP (rare but possible)
+            if active_truth_seekers == 0 and active_misinformers > 0:
+                game_session["winner"] = "misinformers"
+                game_session["win_reason"] = "All Truth Seekers shadow banned or eliminated"
+                logger.info(f"Game {game_session['game_id']}: Scammers won - all Truth Seekers neutralized")
+                return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"Failed to check shadow ban win conditions: {e}")
+            return False
     
     def _trigger_game_end(self, game_session: Dict) -> None:
         """Trigger immediate game end by transitioning to game end phase."""
@@ -885,17 +942,92 @@ class TruthWarsManager:
             logger.error(f"Failed to log headline vote - error: {str(e)}")
     
     async def _apply_ability_effects(self, game_session: Dict, ability_result: Dict) -> None:
-        """Apply the effects of a role ability."""
-        # Store temporary effects
-        if "effect" in ability_result:
-            effect_name = ability_result["effect"]
-            duration = ability_result.get("duration_rounds", 1)
+        """Apply the effects of a role ability, including shadow bans."""
+        try:
+            effect = ability_result.get("effect")
             
-            game_session["game_effects"][effect_name] = {
-                "duration": duration,
-                "expires_round": game_session["round_number"] + duration,
-                "data": ability_result
-            }
+            if effect == "shadow_ban_target":
+                # Shadow ban the target player
+                target_id = ability_result.get("target")
+                if target_id:
+                    await self._apply_shadow_ban(game_session, target_id, rounds=1)
+                    logger.info(f"Applied shadow ban to player {target_id}")
+                    
+            elif effect == "shadow_ban_self":
+                # Shadow ban the sniper (failed snipe)
+                sniper_id = ability_result.get("sniper_id")  # This should be passed from the role
+                if sniper_id:
+                    await self._apply_shadow_ban(game_session, sniper_id, rounds=1)
+                    logger.info(f"Applied shadow ban to sniper {sniper_id} (failed snipe)")
+            
+            # Store temporary effects (for other abilities)
+            if "effect" in ability_result:
+                effect_name = ability_result["effect"]
+                duration = ability_result.get("duration_rounds", 1)
+                
+                game_session["game_effects"][effect_name] = {
+                    "duration": duration,
+                    "expires_round": game_session["round_number"] + duration,
+                    "data": ability_result
+                }
+                
+        except Exception as e:
+            logger.error(f"Failed to apply ability effects: {e}")
+    
+    async def _apply_shadow_ban(self, game_session: Dict, player_id: int, rounds: int = 1) -> None:
+        """Apply shadow ban to a player for specified number of rounds."""
+        try:
+            # Add player to shadow ban tracking
+            game_session["shadow_banned_players"][player_id] = rounds
+            
+            # Get player info for notification
+            player_data = game_session["players"].get(player_id, {})
+            username = player_data.get("username", f"Player {player_id}")
+            
+            # Send notification to chat
+            bot_context = getattr(self, '_bot_context', None)
+            if bot_context:
+                shadow_ban_message = (
+                    f"🚫 **Player Shadow Banned!**\n\n"
+                    f"**{username}** has been shadow banned for {rounds} round(s).\n\n"
+                    f"❌ They cannot speak during discussion phases\n"
+                    f"✅ They can still vote on headlines\n\n"
+                    f"🤔 **Strategic Question:** Was this a Scammer or Fact Checker?"
+                )
+                
+                await bot_context.bot.send_message(
+                    chat_id=game_session["chat_id"],
+                    text=shadow_ban_message
+                )
+            
+            logger.info(f"Player {player_id} shadow banned for {rounds} rounds")
+            
+        except Exception as e:
+            logger.error(f"Failed to apply shadow ban to player {player_id}: {e}")
+    
+    def _reduce_shadow_ban_durations(self, game_session: Dict) -> None:
+        """Reduce shadow ban durations at the start of each round."""
+        try:
+            shadow_banned_players = game_session.get("shadow_banned_players", {})
+            expired_bans = []
+            
+            for player_id, rounds_remaining in shadow_banned_players.items():
+                if rounds_remaining <= 1:
+                    expired_bans.append(player_id)
+                else:
+                    shadow_banned_players[player_id] = rounds_remaining - 1
+            
+            # Remove expired shadow bans
+            for player_id in expired_bans:
+                del shadow_banned_players[player_id]
+                
+                # Notify about ban expiration
+                player_data = game_session["players"].get(player_id, {})
+                username = player_data.get("username", f"Player {player_id}")
+                logger.info(f"Shadow ban expired for player {player_id} ({username})")
+                
+        except Exception as e:
+            logger.error(f"Failed to reduce shadow ban durations: {e}")
     
     async def _handle_phase_transition(self, game_session: Dict, transition_result: Dict) -> None:
         """Handle phase transition by sending appropriate messages to chat."""
@@ -1393,18 +1525,9 @@ class TruthWarsManager:
                 new_player_data = game_session["players"].get(new_drunk_id, {})
                 new_username = new_player_data.get("username", f"Player {new_drunk_id}")
             
-            # Send rotation notification to chat
-            rotation_message = (
-                f"🔄 **Drunk Role Rotation!**\n\n"
-                f"🧍 **New Drunk:** {new_username}\n"
-                f"💡 The drunk player receives inside information this round and should share source verification tips with everyone!\n\n"
-                f"📚 **Educational Tip:** Always check multiple reliable sources before believing news!"
-            )
-            
-            await bot_context.bot.send_message(
-                chat_id=game_session["chat_id"],
-                text=rotation_message
-            )
+            # Drunk role rotation happens silently - no public announcement
+            # Players will only know when the drunk player shares tips or information
+            logger.info(f"Drunk role rotated from {old_username} to {new_username} (silent rotation)")
             
             # Send private message to new drunk with their role info
             if new_drunk_id:

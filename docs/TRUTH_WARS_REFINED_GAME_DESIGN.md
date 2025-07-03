@@ -155,5 +155,3 @@ AI generates a headline (real or fake):
 - **Timer system**: Enforced 3-minute discussion phases
 - **Vote weighting**: Handle Influencer's 2x vote power
 - **Shadow ban system**: Restrict communication abilities
-
-This refined design creates a **more educational and strategic** experience focused on **actual media literacy skills** while maintaining engaging social deduction elements! 🎓✨ 

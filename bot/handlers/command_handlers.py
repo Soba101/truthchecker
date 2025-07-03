@@ -12,7 +12,7 @@ from ..utils.logging_config import log_user_action, get_logger
 from ..utils.config import get_settings
 from .truth_wars_handlers import (
     start_truth_wars, join_game_callback, start_game_callback, 
-    how_to_play_callback, vote_command, ability_command, status_command
+    vote_command, ability_command, status_command
 )
 
 # Logger setup
@@ -257,7 +257,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     """
     Handle the /stats command.
     
-    Display user's personal game statistics.
+    Display user's personal game statistics from the database.
     
     Args:
         update: Telegram update object
@@ -269,37 +269,105 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     # Log user action
     log_user_action(user.id, "stats_command", username=user.username)
     
-    # Placeholder stats (will be replaced with real database queries)
-    stats_text = f"""
+    try:
+        # Import database dependencies
+        from ..database.database import DatabaseSession
+        from ..database.models import User as UserModel
+        from sqlalchemy import select
+        
+        # Query user stats from database
+        async with DatabaseSession() as session:
+            result = await session.execute(
+                select(UserModel).where(UserModel.id == user.id)
+            )
+            user_stats = result.scalar_one_or_none()
+            
+            if user_stats is None:
+                # Create new user if they don't exist
+                user_stats = UserModel(
+                    id=user.id,
+                    username=user.username,
+                    first_name=user.first_name,
+                    is_active=True
+                )
+                session.add(user_stats)
+                await session.commit()
+            
+            # Determine most played role
+            role_counts = {
+                'Fact Checker': user_stats.times_as_fact_checker,
+                'Scammer': user_stats.times_as_scammer,
+                'Influencer': user_stats.times_as_influencer,
+                'Drunk': user_stats.times_as_drunk,
+                'Normie': user_stats.times_as_normie
+            }
+            most_played_role = max(role_counts, key=role_counts.get) if max(role_counts.values()) > 0 else "None yet"
+            
+            # Calculate role performance
+            best_performance = "None yet"
+            if user_stats.total_games > 0:
+                # Simple heuristic: role with highest win rate
+                truth_win_rate = (user_stats.truth_team_wins / max(user_stats.total_games, 1)) * 100
+                scammer_win_rate = (user_stats.scammer_team_wins / max(user_stats.total_games, 1)) * 100
+                if truth_win_rate > scammer_win_rate:
+                    best_performance = "Truth Team Roles"
+                elif scammer_win_rate > 0:
+                    best_performance = "Scammer Team Roles"
+            
+            # Generate achievements based on stats
+            achievements = []
+            if user_stats.total_games >= 10:
+                achievements.append("🎮 Veteran Player (10+ games)")
+            if user_stats.win_rate >= 60:
+                achievements.append("🏆 Skilled Player (60%+ win rate)")
+            if user_stats.headline_accuracy >= 75:
+                achievements.append("🔍 Sharp Detective (75%+ accuracy)")
+            if user_stats.best_learning_streak >= 5:
+                achievements.append("🔥 Learning Streak (5+ correct)")
+            if user_stats.snipe_success_rate >= 70:
+                achievements.append("🎯 Snipe Master (70%+ success)")
+            if user_stats.media_literacy_level >= 5:
+                achievements.append("🧠 Media Literate (Level 5+)")
+            
+            if not achievements:
+                achievements_text = "• No achievements yet - start playing to earn some!"
+            else:
+                achievements_text = "\n".join([f"• {achievement}" for achievement in achievements])
+            
+            # Format best game info
+            best_game_info = "N/A"
+            if user_stats.total_games > 0:
+                best_game_info = f"Best Streak: {user_stats.best_learning_streak} correct votes"
+            
+            stats_text = f"""
 📊 **Your Truth Wars Statistics**
 
-👤 **Player:** {user.first_name}
+👤 **Player:** {user_stats.first_name or user.first_name}
 
 🎮 **Game Stats:**
-• **Games Played:** 0
-• **Games Won:** 0
-• **Win Rate:** 0%
-• **Total Score:** 0
+• **Games Played:** {user_stats.total_games}
+• **Games Won:** {user_stats.total_wins}
+• **Win Rate:** {user_stats.win_rate:.1f}%
+• **Total Score:** {user_stats.total_reputation_earned} RP
 
 🧠 **Media Literacy Progress:**
-• **Headlines Analyzed:** 0
-• **Correct Identifications:** 0%
-• **Detection Accuracy:** 0%
-• **Learning Streak:** 0
+• **Headlines Analyzed:** {user_stats.headlines_voted_on}
+• **Correct Identifications:** {user_stats.headline_accuracy:.1f}%
+• **Detection Accuracy:** {user_stats.headline_accuracy:.1f}%
+• **Learning Streak:** {user_stats.learning_streak}
 
 🎭 **Favorite Roles:**
-• **Most Played:** None yet
-• **Best Performance:** None yet
+• **Most Played:** {most_played_role}
+• **Best Performance:** {best_performance}
 
-🥇 **Best Game:** N/A
+🥇 **Best Game:** {best_game_info}
 
 🏅 **Achievements:**
-• No achievements yet - start playing to earn some!
+{achievements_text}
 
 💡 **Tip:** Use `/truthwars` in a group chat to start your first game!
-    """
-    
-    try:
+            """
+        
         await context.bot.send_message(
             chat_id=chat_id,
             text=stats_text,
@@ -309,9 +377,10 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         
     except Exception as e:
         logger.error(f"Error in stats command - user_id={user.id}, error={str(e)}")
+        # Fallback to basic message if database query fails
         await context.bot.send_message(
             chat_id=chat_id,
-            text="Sorry, something went wrong. Please try again later."
+            text="📊 **Your Stats**\n\nSorry, unable to load your statistics right now. Please try again later."
         )
 
 

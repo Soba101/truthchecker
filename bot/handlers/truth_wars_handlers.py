@@ -60,8 +60,7 @@ async def start_truth_wars(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         # Create lobby keyboard
         keyboard = [
             [InlineKeyboardButton("🎮 Join Game", callback_data=f"join_{game_id}")],
-            [InlineKeyboardButton("▶️ Start Game", callback_data=f"start_{game_id}")],
-            [InlineKeyboardButton("ℹ️ How to Play", callback_data="how_to_play")]
+            [InlineKeyboardButton("▶️ Start Game", callback_data=f"start_{game_id}")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
@@ -128,8 +127,7 @@ async def join_game_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             # Create updated keyboard
             keyboard = [
                 [InlineKeyboardButton("🎮 Join Game", callback_data=f"join_{game_id}")],
-                [InlineKeyboardButton("▶️ Start Game", callback_data=f"start_{game_id}")],
-                [InlineKeyboardButton("ℹ️ How to Play", callback_data="how_to_play")]
+                [InlineKeyboardButton("▶️ Start Game", callback_data=f"start_{game_id}")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
@@ -274,41 +272,6 @@ async def start_game_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         except Exception as alert_error:
             logger.error(f"Failed to send error alert: {alert_error}")
 
-
-async def how_to_play_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle how to play button callback."""
-    query = update.callback_query
-    await query.answer()
-    
-    await query.edit_message_text(
-        "📚 **HOW TO PLAY TRUTH WARS**\n\n"
-        "🎯 **OBJECTIVE:**\n"
-        "🔵 **Truth Seekers:** Eliminate all misinformers\n"
-        "🔴 **Misinformers:** Survive & avoid detection\n\n"
-        "📰 **GAMEPLAY:**\n"
-        "Each round you analyze a **news headline**:\n"
-        "• 🤔 Is it **real** or **fake** news?\n"
-        "• 💬 **Discuss** with other players\n"
-        "• 🔍 Use your **role abilities** (`/ability`)\n"
-        "• 🗳️ **Vote Trust/Flag** on the headline\n"
-        "• 📚 **Learn** from explanations!\n\n"
-        "🎭 **EXAMPLE ROLES:**\n"
-        "📋 **Fact-Checker** - Investigate players\n"
-        "🔬 **Researcher** - Verify sources\n"
-        "📰 **Journalist** - Share insights\n"
-        "😈 **Scammer** - Spread confusion\n"
-        "🎭 **Deepfaker** - Create deceptions\n"
-        "🧍 **Normie** - Learn through discussion\n\n"
-        "🏆 **GAME STRUCTURE:**\n"
-        "• 🎭 Get secret role (private message)\n"
-        "• 📰 5 rounds of headline analysis\n"
-        "• 🗳️ Trust/Flag voting each round\n"
-        "• 📚 Educational explanations\n"
-        "• 🎉 Team victory & learning outcomes!\n\n"
-        "💡 **PRO TIP:** Look for emotional language, check sources, and think critically!\n\n"
-        "🧠 **Learn real media literacy skills while playing!**",
-        parse_mode='Markdown'
-    )
 
 
 async def vote_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -597,8 +560,6 @@ async def handle_truth_wars_callback(update: Update, context: ContextTypes.DEFAU
             await join_game_callback(update, context)
         elif callback_data.startswith("start_"):
             await start_game_callback(update, context)
-        elif callback_data == "how_to_play":
-            await how_to_play_callback(update, context)
         elif callback_data.startswith("vote_trust_"):
             await handle_trust_vote(update, context)
         elif callback_data.startswith("vote_flag_"):

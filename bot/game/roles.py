@@ -60,13 +60,14 @@ class Role(ABC):
         """Check if this role can use snipe ability."""
         return hasattr(self, 'snipe_ability') and not self.has_used_snipe
     
-    def use_snipe(self, target_user_id: int, game_state: Dict) -> Dict[str, Any]:
+    def use_snipe(self, target_user_id: int, game_state: Dict, sniper_id: int) -> Dict[str, Any]:
         """
         Use the snipe ability to shadow ban a target.
         
         Args:
             target_user_id: The player to target
             game_state: Current game state
+            sniper_id: The player using the snipe ability
             
         Returns:
             Dict with result of snipe attempt
@@ -78,9 +79,9 @@ class Role(ABC):
         self.has_used_snipe = True
         
         # Check if target is correct (implemented in subclasses)
-        return self._execute_snipe(target_user_id, game_state)
+        return self._execute_snipe(target_user_id, game_state, sniper_id)
     
-    def _execute_snipe(self, target_user_id: int, game_state: Dict) -> Dict[str, Any]:
+    def _execute_snipe(self, target_user_id: int, game_state: Dict, sniper_id: int) -> Dict[str, Any]:
         """Execute the snipe attempt (implemented in subclasses)."""
         return {"success": False, "message": "Snipe not implemented for this role"}
 
@@ -111,7 +112,7 @@ class FactChecker(Role):
             "• Help your team identify fake news\n"
             "• Guide discussions subtly without revealing your role\n"
             "• Use your snipe ability wisely\n\n"
-            "🔍 **Special Abilities:**\n"
+            "🔍 *Special Abilities:*\n"
             "• You receive the correct answer for most headlines\n"
             "• **WARNING**: One round will have NO INFO - be careful!\n"
             "• One-time **SNIPE** ability to shadow ban a suspected Scammer\n\n"
@@ -142,7 +143,7 @@ class FactChecker(Role):
         """Check if Fact Checker should receive info this round."""
         return current_round != self.no_info_round
     
-    def _execute_snipe(self, target_user_id: int, game_state: Dict) -> Dict[str, Any]:
+    def _execute_snipe(self, target_user_id: int, game_state: Dict, sniper_id: int) -> Dict[str, Any]:
         """Execute snipe attempt against suspected Scammer."""
         target_role = game_state.get("player_roles", {}).get(target_user_id, {}).get("role")
         
@@ -159,7 +160,8 @@ class FactChecker(Role):
                 "success": False,
                 "message": "Wrong target! You are now shadow banned.",
                 "effect": "shadow_ban_self",
-                "target": None
+                "target": None,
+                "sniper_id": sniper_id
             }
 
 
@@ -212,7 +214,7 @@ class Scammer(Role):
             abilities.append("SNIPE ability used")
         return abilities
     
-    def _execute_snipe(self, target_user_id: int, game_state: Dict) -> Dict[str, Any]:
+    def _execute_snipe(self, target_user_id: int, game_state: Dict, sniper_id: int) -> Dict[str, Any]:
         """Execute snipe attempt against suspected Fact Checker."""
         target_role = game_state.get("player_roles", {}).get(target_user_id, {}).get("role")
         
@@ -229,7 +231,8 @@ class Scammer(Role):
                 "success": False,
                 "message": "Wrong target! You are now shadow banned.",
                 "effect": "shadow_ban_self",
-                "target": None
+                "target": None,
+                "sniper_id": sniper_id
             }
 
 
