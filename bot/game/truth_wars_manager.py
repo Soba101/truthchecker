@@ -20,6 +20,8 @@ from .roles import assign_roles, create_role_instance, Role
 from .game_states import GameStateMachine, PhaseType
 from ..utils.logging_config import get_logger, log_game_event
 from ..utils.config import get_settings
+from ..database.seed_data import get_media_literacy_tip
+from ..ai.headline_generator import get_headline_generator
 
 # Setup logger
 logger = get_logger(__name__)
@@ -316,6 +318,11 @@ class TruthWarsManager:
         """
         Get a random headline for the current round.
         
+        This method uses a hybrid approach:
+        1. Try AI headline generation (if enabled and available)
+        2. Fallback to database headlines
+        3. Final fallback to sample headlines
+        
         Args:
             difficulty: Difficulty level (easy, medium, hard)
             category: Optional category filter
@@ -324,7 +331,41 @@ class TruthWarsManager:
             Optional[Headline]: Selected headline or None if none available
         """
         try:
-            # Try to get headline from database first
+            # First, try AI headline generation if enabled
+            headline_generator = get_headline_generator()
+            settings = get_settings()
+            
+            # Determine if we should use AI based on configuration
+            use_ai = (
+                headline_generator.is_available() 
+                and random.randint(1, 100) <= settings.ai_headline_usage_percentage
+            )
+            
+            if use_ai:
+                logger.info(f"Attempting AI headline generation - difficulty: {difficulty}, category: {category}")
+                ai_headline = await headline_generator.generate_headline(
+                    difficulty=difficulty,
+                    category=category or "general"
+                )
+                
+                if ai_headline:
+                    # Create a temporary headline object from AI data
+                    headline = type('Headline', (), {
+                        'id': str(uuid.uuid4()),
+                        'text': ai_headline['text'],
+                        'is_real': ai_headline['is_real'],
+                        'source': ai_headline['source'],
+                        'explanation': ai_headline['explanation'],
+                        'category': ai_headline['category'],
+                        'difficulty': ai_headline['difficulty']
+                    })()
+                    
+                    logger.info(f"Successfully generated AI headline: {ai_headline['text'][:50]}...")
+                    return headline
+                else:
+                    logger.warning("AI headline generation failed, falling back to database")
+            
+            # Fallback: Try to get headline from database
             async with DatabaseSession() as session:
                 from sqlalchemy import select, func
                 
@@ -341,9 +382,11 @@ class TruthWarsManager:
                 headline = result.scalar_one_or_none()
                 
                 if headline:
+                    logger.info(f"Using database headline: {headline.text[:50]}...")
                     return headline
                     
-            # Fallback to sample headlines if database is empty
+            # Final fallback: Use sample headlines if database is empty
+            logger.info("Database empty, using sample headlines as final fallback")
             sample_headlines = [
                 {
                     "text": "Scientists discover chocolate consumption linked to improved memory",
@@ -603,12 +646,41 @@ class TruthWarsManager:
         
         # Check if it's a snipe ability and if the role can use it
         if ability == "snipe" and role.can_use_snipe():
+            # CRITICAL: Validate snipe timing restrictions
+            if not self._can_use_snipe_this_round(game_session, user_id):
+                logger.info(f"Player {user_id} attempted snipe outside valid timing")
+                return
+                
             game_state = self._get_game_state(game_session)
-            result = role.use_snipe(target, game_state)
+            result = role.use_snipe(target, game_state, user_id)  # Pass sniper_id
             
             # Apply ability effects
             if result.get("success"):
                 await self._apply_ability_effects(game_session, result)
+    
+    def _can_use_snipe_this_round(self, game_session: Dict, player_id: int) -> bool:
+        """Check if player can use snipe ability this round."""
+        # Check if we're in the correct phase
+        current_phase = game_session["state_machine"].get_current_phase_type()
+        if current_phase.value != "snipe_opportunity":
+            return False
+            
+        # Check if this is a valid snipe round (2 or 4)
+        current_round = game_session["round_number"]
+        if not self._is_snipe_round(current_round):
+            return False
+        
+        # Check if player has snipe ability and hasn't used it
+        role_info = game_session["player_roles"].get(player_id)
+        if not role_info:
+            return False
+            
+        role = role_info.get("role")
+        return role and role.can_use_snipe()
+
+    def _is_snipe_round(self, round_number: int) -> bool:
+        """Check if current round allows snipe abilities."""
+        return round_number in [2, 4]
     
     async def _check_phase_transition(self, game_session: Dict) -> None:
         """Check if current phase should transition."""
@@ -625,6 +697,9 @@ class TruthWarsManager:
                     await self._start_news_phase(game_session)
                 elif new_phase == "resolution":
                     await self._resolve_voting(game_session)
+                elif new_phase == "snipe_opportunity":
+                    # Send enhanced snipe opportunity message
+                    await self._send_snipe_opportunity_message(game_session, getattr(self, '_bot_context', None))
     
     async def _start_news_phase(self, game_session: Dict) -> None:
         """Start a new news phase with a fresh headline."""
@@ -1067,6 +1142,9 @@ class TruthWarsManager:
                 if current_headline:
                     # Use chat_id instead of non-existent session_id
                     await send_headline_voting(bot_context, game_session["chat_id"], current_headline)
+                
+                # Remind drunk player to share educational tip
+                await self._remind_drunk_to_teach(game_session, bot_context)
             
             elif new_phase == "voting":
                 # Send player voting interface
@@ -1076,6 +1154,10 @@ class TruthWarsManager:
                 ]
                 if len(alive_players) > 1:  # Only if there are players to vote for
                     await self._send_player_voting_interface(game_session, bot_context)
+            
+            elif new_phase == "snipe_opportunity":
+                # Send enhanced snipe opportunity message
+                await self._send_snipe_opportunity_message(game_session, bot_context)
             
             elif new_phase == "resolution":
                 # Send headline resolution results
@@ -1222,10 +1304,59 @@ class TruthWarsManager:
                 text=resolution_text
             )
             
+            # Add snipe timing information for player awareness
+            await self._send_snipe_timing_info(game_session, bot_context)
+            
         except Exception as e:
             logger.error(f"Failed to send headline resolution: {e}")
             import traceback
             traceback.print_exc()
+    
+    async def _send_snipe_timing_info(self, game_session: Dict, bot_context) -> None:
+        """Send information about snipe timing to help players understand when snipes are available."""
+        if not bot_context:
+            return
+            
+        current_round = game_session["round_number"]
+        chat_id = game_session["chat_id"]
+        
+        if self._is_snipe_round(current_round):
+            # This is a snipe round - the snipe opportunity phase will follow
+            snipe_info = (
+                f"🎯 **Next: Snipe Opportunity Phase!**\n"
+                f"⚡ Fact Checkers and Scammers will have 90 seconds to use their snipe abilities\n"
+                f"🎯 Target wisely - wrong targets result in self-shadow ban!"
+            )
+        else:
+            # This is NOT a snipe round - tell them when next snipe will be
+            next_snipe_round = None
+            for snipe_round in [2, 4]:
+                if snipe_round > current_round:
+                    next_snipe_round = snipe_round
+                    break
+                    
+            if next_snipe_round:
+                snipe_info = (
+                    f"ℹ️ **Snipe Information**\n"
+                    f"🚫 No snipe abilities this round\n"
+                    f"⏭️ Next snipe opportunity: **Round {next_snipe_round}**\n"
+                    f"📝 Remember: Snipes only available on rounds 2 and 4"
+                )
+            else:
+                snipe_info = (
+                    f"ℹ️ **Snipe Information**\n"
+                    f"🚫 No more snipe opportunities this game\n"
+                    f"📝 Snipe rounds (2 and 4) have passed"
+                )
+        
+        try:
+            await bot_context.bot.send_message(
+                chat_id=chat_id,
+                text=snipe_info
+            )
+            logger.info(f"Sent snipe timing info for round {current_round}")
+        except Exception as e:
+            logger.error(f"Failed to send snipe timing info: {e}")
     
     async def _send_game_end_results(self, game_session: Dict, bot_context) -> None:
         """Send final game results and role reveals."""
@@ -1271,6 +1402,11 @@ class TruthWarsManager:
             results_text += f"\n📊 **Game Stats:**\n"
             results_text += f"• Rounds played: {game_session['round_number']}\n"
             results_text += f"• Players eliminated: {len(game_session['eliminated_players'])}\n"
+            
+            # Add educational summary
+            educational_summary = self._generate_educational_summary(game_session)
+            if educational_summary:
+                results_text += f"\n{educational_summary}"
             
             # TODO: Determine winning faction and show win/loss
             results_text += "\n🎮 Type /truthwars to start a new game!"
@@ -1549,7 +1685,7 @@ class TruthWarsManager:
             logger.error(f"Failed to notify drunk rotation: {e}")
     
     async def _send_drunk_correct_answer(self, game_session: Dict) -> None:
-        """Send the correct answer to the current drunk player."""
+        """Send the correct answer and educational content to the current drunk player."""
         try:
             drunk_rotation = game_session["drunk_rotation"]
             current_drunk_id = drunk_rotation.get("current_drunk_id")
@@ -1569,13 +1705,21 @@ class TruthWarsManager:
             headline_text = current_headline.get("text", "Unknown headline")
             explanation = current_headline.get("explanation", "No explanation available")
             
+            # Get contextual educational tip based on headline
+            educational_tip = await get_media_literacy_tip()
+            
             correct_answer = "REAL" if headline_is_real else "FAKE"
             drunk_message = (
                 f"🧍 **DRUNK INSIDE INFO**\n\n"
                 f"📰 **Headline:** {headline_text}\n\n"
                 f"🎯 **Correct Answer:** This headline is **{correct_answer}**\n\n"
                 f"💡 **Explanation:** {explanation}\n\n"
-                f"📚 **Your job:** Share source verification tips with the group during discussion!"
+                f"📚 **YOUR TEACHING MISSION:**\n"
+                f"During discussion, share this media literacy tip with everyone:\n\n"
+                f"🔍 **{educational_tip.get('category', 'General').replace('_', ' ').title()} Tip:**\n"
+                f"💭 *\"{educational_tip.get('tip', 'Always verify sources before trusting information')}\"*\n\n"
+                f"🎓 **Why this matters:** {educational_tip.get('explanation', 'Critical thinking helps identify misinformation')}\n\n"
+                f"📢 **Remember:** Help others learn to spot fake news during the discussion!"
             )
             
             await bot_context.bot.send_message(
@@ -1583,7 +1727,15 @@ class TruthWarsManager:
                 text=drunk_message
             )
             
-            logger.info(f"Sent correct answer to drunk player {current_drunk_id}")
+            # Track educational content delivered
+            game_session.setdefault("educational_content_delivered", []).append({
+                "round": game_session["round_number"],
+                "drunk_player": current_drunk_id,
+                "tip_category": educational_tip.get("category"),
+                "tip_content": educational_tip.get("tip")
+            })
+            
+            logger.info(f"Sent correct answer and educational tip to drunk player {current_drunk_id}")
             
         except Exception as e:
             logger.error(f"Failed to send drunk correct answer: {e}")
@@ -1709,6 +1861,9 @@ class TruthWarsManager:
                             await self._start_news_phase(game_session)
                         elif new_phase == "resolution":
                             await self._resolve_voting(game_session)
+                        elif new_phase == "snipe_opportunity":
+                            # Send enhanced snipe opportunity message
+                            await self._send_snipe_opportunity_message(game_session, getattr(self, '_bot_context', None))
                 
                 # Wait 5 seconds before next check
                 await asyncio.sleep(5)
@@ -1732,3 +1887,105 @@ class TruthWarsManager:
         for game_id in finished_games:
             del self.active_games[game_id]
             logger.info(f"Cleaned up finished game - game_id: {game_id}") 
+    
+    async def _send_snipe_opportunity_message(self, game_session: Dict, bot_context) -> None:
+        """Send enhanced snipe opportunity message with clear instructions."""
+        if not bot_context:
+            return
+            
+        current_round = game_session["round_number"]
+        chat_id = game_session["chat_id"]
+        
+        # Build snipe opportunity message
+        snipe_message = (
+            f"🎯 **Round {current_round}: Snipe Opportunity!**\n\n"
+            f"⚡ **Fact Checkers** and **Scammers** can now use their snipe abilities!\n"
+            f"🎯 Target your suspected enemies to shadow ban them\n"
+            f"⚠️ **WARNING**: Wrong target = YOU get shadow banned!\n\n"
+            f"⏰ **90 seconds** to decide...\n\n"
+        )
+        
+        # Check which players can actually snipe
+        eligible_snipers = []
+        for player_id, role_info in game_session["player_roles"].items():
+            role = role_info.get("role")
+            if role and role.can_use_snipe():
+                player_data = game_session["players"].get(player_id, {})
+                username = player_data.get("username", f"Player {player_id}")
+                eligible_snipers.append(username)
+        
+        if eligible_snipers:
+            snipe_message += f"🎯 **Players with snipe ability available**: {', '.join(eligible_snipers)}\n\n"
+        else:
+            snipe_message += f"ℹ️ **No players have unused snipe abilities this round**\n\n"
+            
+        snipe_message += (
+            f"📝 **Reminder**: \n"
+            f"• Snipes are only available on rounds 2 and 4\n"
+            f"• Each role can only snipe once per game\n"
+            f"• Shadow bans last for 1 round\n"
+            f"• Failed snipes result in self-shadow ban"
+        )
+        
+        try:
+            await bot_context.bot.send_message(
+                chat_id=chat_id,
+                text=snipe_message
+            )
+            logger.info(f"Sent snipe opportunity message for round {current_round}")
+        except Exception as e:
+            logger.error(f"Failed to send snipe opportunity message: {e}")
+    
+    async def _remind_drunk_to_teach(self, game_session: Dict, bot_context) -> None:
+        """Remind the drunk player to share educational tips during the discussion phase."""
+        try:
+            current_drunk_id = game_session["drunk_rotation"]["current_drunk_id"]
+            if current_drunk_id:
+                reminder_message = (
+                    f"🧍 **Reminder:** You are the DRUNK for this round!\n\n"
+                    f"💡 **Your job:** Share your source verification tips with the group during the discussion phase."
+                )
+                
+                await bot_context.bot.send_message(
+                    chat_id=current_drunk_id,
+                    text=reminder_message
+                )
+                
+            logger.info("Reminder sent to the drunk player to share educational tips")
+        except Exception as e:
+            logger.error(f"Failed to send reminder to drunk player: {e}")
+    
+    def _generate_educational_summary(self, game_session: Dict) -> str:
+        """Generate a comprehensive summary of educational content covered during the game."""
+        educational_content = game_session.get("educational_content_delivered", [])
+        if not educational_content:
+            return ""
+        
+        summary = "📚 **Educational Summary: What You Learned Today**\n\n"
+        
+        # Show tips by round
+        summary += "🎓 **Media Literacy Tips Shared:**\n"
+        for round_info in educational_content:
+            category = round_info.get('tip_category', 'general').replace('_', ' ').title()
+            tip = round_info.get('tip_content', 'Critical thinking is important')
+            summary += f"• **Round {round_info['round']}** ({category}): {tip}\n"
+        
+        # Show categories covered
+        categories_covered = set()
+        for round_info in educational_content:
+            categories_covered.add(round_info.get('tip_category', 'general'))
+        
+        if categories_covered:
+            summary += f"\n🎯 **Concepts Covered:** {', '.join(cat.replace('_', ' ').title() for cat in categories_covered)}\n"
+        
+        # Add general reminder
+        summary += (
+            f"\n💡 **Remember these skills for real life:**\n"
+            f"✅ Always check sources before sharing news\n"
+            f"✅ Look for emotional language that might manipulate you\n"
+            f"✅ Cross-reference important claims with multiple sources\n"
+            f"✅ Be skeptical of headlines that seem too shocking to believe\n\n"
+            f"🌟 **Keep practicing media literacy in your daily life!**"
+        )
+        
+        return summary

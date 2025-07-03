@@ -1,6 +1,9 @@
 # Core Bot Framework
 python-telegram-bot==21.5
 
+# AI Features
+openai>=1.0.0
+
 # Database - SQLite for this project
 sqlalchemy==2.0.36
 aiosqlite==0.19.0

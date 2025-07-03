@@ -52,6 +52,12 @@ class Settings:
             
         self.default_game_type: str = os.getenv('DEFAULT_GAME_TYPE', 'word_guess')
         
+        # AI Features Configuration
+        self.openai_api_key: str = os.getenv('OPENAI_API_KEY', '')
+        self.ai_headline_enabled: bool = os.getenv('AI_HEADLINE_ENABLED', 'false').lower() == 'true'
+        self.ai_headline_fallback_enabled: bool = os.getenv('AI_HEADLINE_FALLBACK_ENABLED', 'true').lower() == 'true'
+        self.ai_headline_usage_percentage: int = int(os.getenv('AI_HEADLINE_USAGE_PERCENTAGE', '50'))  # 50% AI, 50% database
+        
         # Security Settings
         self.secret_key: str = os.getenv('SECRET_KEY', 'dev-secret-key')
         admin_ids_str = os.getenv('ADMIN_USER_IDS', '')
