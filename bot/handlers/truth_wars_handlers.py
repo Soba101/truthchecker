@@ -608,31 +608,24 @@ async def handle_trust_vote(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         # Extract headline ID from callback data
         headline_id = query.data.split('_')[2]
         
-        # Process the vote
-        result = await truth_wars_manager.process_player_action(
-            game_id, 
-            user_id, 
-            "vote_headline", 
-            {
-                "vote_type": "trust",
-                "headline_id": headline_id
-            }
+        # Register the vote ONLY (do not trigger phase transitions yet)
+        result = await truth_wars_manager.register_vote_only(
+            game_id, user_id, "trust", headline_id
         )
         
         if result.get("success"):
             await query.answer("✅ You voted TRUST", show_alert=False)
-            
-            # Get player name for display
+            # Send confirmation to chat immediately
             player_name = update.effective_user.first_name or "Player"
-            
-            # Send confirmation to chat
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text=f"✅ {player_name} voted TRUST on the headline"
             )
+            # Now check and advance phase (may send round results, etc.)
+            await truth_wars_manager.check_and_advance_phase(game_id)
         else:
             await query.answer(f"❌ {result.get('message', 'Vote failed')}", show_alert=True)
-            
+        
     except Exception as e:
         logger.error(f"Failed to handle trust vote: {e}")
         await query.answer("❌ Failed to process vote", show_alert=True)
@@ -655,31 +648,24 @@ async def handle_flag_vote(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         # Extract headline ID from callback data
         headline_id = query.data.split('_')[2]
         
-        # Process the vote
-        result = await truth_wars_manager.process_player_action(
-            game_id, 
-            user_id, 
-            "vote_headline", 
-            {
-                "vote_type": "flag",
-                "headline_id": headline_id
-            }
+        # Register the vote ONLY (do not trigger phase transitions yet)
+        result = await truth_wars_manager.register_vote_only(
+            game_id, user_id, "flag", headline_id
         )
         
         if result.get("success"):
             await query.answer("🚩 You voted FLAG", show_alert=False)
-            
-            # Get player name for display
+            # Send confirmation to chat immediately
             player_name = update.effective_user.first_name or "Player"
-            
-            # Send confirmation to chat
             await context.bot.send_message(
                 chat_id=update.effective_chat.id,
                 text=f"🚩 {player_name} voted FLAG on the headline"
             )
+            # Now check and advance phase (may send round results, etc.)
+            await truth_wars_manager.check_and_advance_phase(game_id)
         else:
             await query.answer(f"❌ {result.get('message', 'Vote failed')}", show_alert=True)
-            
+        
     except Exception as e:
         logger.error(f"Failed to handle flag vote: {e}")
         await query.answer("❌ Failed to process vote", show_alert=True)
@@ -883,12 +869,6 @@ async def handle_end_game_callback(update: Update, context: ContextTypes.DEFAULT
         
         if result["success"]:
             await query.answer("🛑 Game ended!", show_alert=False)
-            
-            # Send confirmation to chat
-            await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text="🛑 **Game Ended by Creator**\n\nShowing final results..."
-            )
             
             # Edit the message to remove buttons
             try:

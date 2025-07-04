@@ -634,7 +634,12 @@ class TruthWarsManager:
                 "vote_type": vote_type,
                 "headline_id": headline_id
             }
-            
+            # Log vote and eligible voters for debugging
+            eligible_voters = [pid for pid in game_session["players"].keys() 
+                              if pid not in game_session["eliminated_players"] 
+                              and self._can_player_vote(game_session, pid)]
+            logger.info(f"Vote received: voter_id={voter_id}, vote_type={vote_type}, headline_id={headline_id}")
+            logger.info(f"Total votes: {len(game_session['votes'])}, Eligible voters: {eligible_voters} (count: {len(eligible_voters)})")
             # Calculate if vote is correct based on headline truth
             current_headline = game_session.get("current_headline")
             is_correct = False
@@ -642,7 +647,6 @@ class TruthWarsManager:
                 headline_is_real = current_headline.get("is_real", True)
                 # Correct if: (real headline + trust vote) OR (fake headline + flag vote)
                 is_correct = (headline_is_real and vote_type == "trust") or (not headline_is_real and vote_type == "flag")
-            
             # Log headline vote to database
             await self._log_headline_vote(
                 game_session["game_id"], 
@@ -651,6 +655,9 @@ class TruthWarsManager:
                 vote_type, 
                 is_correct
             )
+        # Always check phase transition after a vote
+        logger.info("Calling _check_phase_transition after vote.")
+        await self._check_phase_transition(game_session)
     
     async def _handle_ability_use(self, game_session: Dict, user_id: int, ability_data: Any) -> None:
         """Handle a role ability use."""
@@ -708,14 +715,14 @@ class TruthWarsManager:
     async def _check_phase_transition(self, game_session: Dict) -> None:
         """Check if current phase should transition."""
         game_state = self._get_game_state(game_session)
-        
+        logger.info(f"_check_phase_transition: phase={game_session['state_machine'].get_current_phase_type().value}, votes={len(game_session['votes'])}, all_eligible_voted={game_state.get('all_eligible_voted')}, time_remaining={game_session['state_machine'].get_time_remaining()}")
         if game_session["state_machine"].can_transition(game_state):
+            logger.info("Phase can transition. Calling transition_phase.")
             transition_result = game_session["state_machine"].transition_phase(game_state)
-            
             if transition_result:
                 # Handle phase-specific transitions first
                 new_phase = transition_result["to_phase"]
-                
+                logger.info(f"Transitioned to new phase: {new_phase}")
                 if new_phase == "headline_reveal":
                     await self._start_news_phase(game_session)
                 elif new_phase == "round_results":
@@ -723,9 +730,10 @@ class TruthWarsManager:
                 elif new_phase == "snipe_opportunity":
                     # Send enhanced snipe opportunity message
                     await self._send_snipe_opportunity_message(game_session, getattr(self, '_bot_context', None))
-                
                 # CRITICAL: Send phase transition messages to chat
                 await self._handle_phase_transition(game_session, transition_result)
+        else:
+            logger.info("Phase cannot transition yet.")
     
     async def _start_news_phase(self, game_session: Dict) -> None:
         """Start a new news phase with a fresh headline."""
@@ -1154,9 +1162,6 @@ class TruthWarsManager:
             start_result = transition_result.get("start_result", {})
             message = start_result.get("message")
             
-            if not message:
-                return
-                
             # Get chat ID from bot context
             chat_id = game_session.get("chat_id")
             if not chat_id:
@@ -1170,11 +1175,14 @@ class TruthWarsManager:
                 logger.error(f"Cannot send phase transition message for game {game_session.get('game_id')} - no bot context")
                 return
             
-            # Send basic phase message
-            await bot_context.bot.send_message(
-                chat_id=chat_id,
-                text=message
-            )
+            # Send basic phase message if present
+            if message:
+                await bot_context.bot.send_message(
+                    chat_id=chat_id,
+                    text=message
+                )
+            else:
+                logger.info(f"No generic phase message for phase {new_phase}, proceeding to special-case handler.")
             
             # Handle special cases for specific phases
             if new_phase == "discussion":
@@ -1183,7 +1191,6 @@ class TruthWarsManager:
                 if current_headline:
                     # Use chat_id instead of non-existent session_id
                     await send_headline_voting(bot_context, game_session["chat_id"], current_headline)
-                
                 # Remind drunk player to share educational tip
                 await self._remind_drunk_to_teach(game_session, bot_context)
             
@@ -1202,12 +1209,13 @@ class TruthWarsManager:
             
             elif new_phase == "resolution" or new_phase == "round_results":
                 # Send headline resolution results
+                logger.info(f"Sending round results for phase {new_phase}")
                 await self._send_headline_resolution(game_session, bot_context)
-                
+            
             elif new_phase == "game_end":
                 # Send final results and role reveals
                 await self._send_game_end_results(game_session, bot_context)
-                
+        
         except Exception as e:
             logger.error(f"Failed to handle phase transition: {e}")
             import traceback
@@ -1345,12 +1353,16 @@ class TruthWarsManager:
                 text=resolution_text
             )
             
-            # Add snipe timing information for player awareness
-            await self._send_snipe_timing_info(game_session, bot_context)
+            # Only send snipe timing info if this is a snipe round (rounds 2 or 4)
+            current_round = game_session["round_number"]
+            if self._is_snipe_round(current_round):
+                await self._send_snipe_timing_info(game_session, bot_context)
             
-            # Send continue/end game options to game creator
-            await self._send_continue_end_options(game_session, bot_context)
-            
+            # Only send continue/end options after snipe rounds or after round 5
+            win_progress = game_session["win_progress"]
+            if self._is_snipe_round(current_round) or win_progress.get("rounds_completed", 0) >= 5 or game_session.get("game_over", False):
+                await self._send_continue_end_options(game_session, bot_context)
+        
         except Exception as e:
             logger.error(f"Failed to send headline resolution: {e}")
             import traceback
@@ -1369,7 +1381,8 @@ class TruthWarsManager:
             snipe_info = (
                 f"🎯 **Next: Snipe Opportunity Phase!**\n"
                 f"⚡ Fact Checkers and Scammers will have 90 seconds to use their snipe abilities\n"
-                f"🎯 Target wisely - wrong targets result in self-shadow ban!"
+                f"🎯 Target wisely - wrong targets result in self-shadow ban!\n\n"
+                f"⏰ **90 seconds** to decide...\n\n"
             )
         else:
             # This is NOT a snipe round - tell them when next snipe will be
@@ -2334,9 +2347,8 @@ class TruthWarsManager:
                             await self._start_news_phase(game_session)
                         elif new_phase == "round_results":
                             await self._resolve_voting(game_session)
-                        elif new_phase == "snipe_opportunity":
-                            # Send enhanced snipe opportunity message
-                            await self._send_snipe_opportunity_message(game_session, getattr(self, '_bot_context', None))
+                        # REMOVED: elif new_phase == "snipe_opportunity":
+                        # REMOVED:     await self._send_snipe_opportunity_message(game_session, getattr(self, '_bot_context', None))
                 
                 # Wait 2 seconds before next check (more responsive)
                 await asyncio.sleep(2)
@@ -2462,3 +2474,43 @@ class TruthWarsManager:
         )
         
         return summary
+
+    async def register_vote_only(self, game_id: str, user_id: int, vote_type: str, headline_id: str) -> dict:
+        """Register a vote for a headline, but do NOT trigger phase transitions."""
+        if game_id not in self.active_games:
+            return {"success": False, "message": "Game not found"}
+        game_session = self.active_games[game_id]
+        if not self._can_player_vote(game_session, user_id):
+            return {"success": False, "message": "Player cannot vote"}
+        # Register the vote
+        game_session["votes"][user_id] = {
+            "vote_type": vote_type,
+            "headline_id": headline_id
+        }
+        # Log vote and eligible voters for debugging
+        eligible_voters = [pid for pid in game_session["players"].keys() 
+                          if pid not in game_session["eliminated_players"] 
+                          and self._can_player_vote(game_session, pid)]
+        logger.info(f"[register_vote_only] Vote received: voter_id={user_id}, vote_type={vote_type}, headline_id={headline_id}")
+        logger.info(f"[register_vote_only] Total votes: {len(game_session['votes'])}, Eligible voters: {eligible_voters} (count: {len(eligible_voters)})")
+        # Log headline vote to database
+        current_headline = game_session.get("current_headline")
+        is_correct = False
+        if current_headline:
+            headline_is_real = current_headline.get("is_real", True)
+            is_correct = (headline_is_real and vote_type == "trust") or (not headline_is_real and vote_type == "flag")
+        await self._log_headline_vote(
+            game_id,
+            user_id,
+            headline_id,
+            vote_type,
+            is_correct
+        )
+        return {"success": True, "message": "Vote registered"}
+
+    async def check_and_advance_phase(self, game_id: str) -> None:
+        """Check if the phase should transition and advance if needed."""
+        if game_id not in self.active_games:
+            return
+        game_session = self.active_games[game_id]
+        await self._check_phase_transition(game_session)
