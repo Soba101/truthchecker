@@ -346,16 +346,33 @@ class RefinedGameStateMachine:
         Returns:
             bool: True if game should end
         """
-        # Check if we've reached max rounds
+        # CRITICAL FIX: Comprehensive win condition logging
+        rounds_completed = game_state.get("rounds_completed", 0)
+        fake_trusted = game_state.get("fake_headlines_trusted", 0)
+        fake_flagged = game_state.get("fake_headlines_flagged", 0)
+        
+        logger.info(f"Win condition check: rounds_completed={rounds_completed}, "
+                   f"fake_trusted={fake_trusted}, fake_flagged={fake_flagged}, "
+                   f"state_machine_round={self.round_number}, max_rounds={self.max_rounds}")
+        
+        # CRITICAL FIX: Check for 5 rounds completed (mandatory end condition)
+        if rounds_completed >= 5:
+            logger.info(f"Game should end: 5 rounds completed ({rounds_completed})")
+            return True
+        
+        # Check if we've reached max rounds (fallback check)
         if self.round_number >= self.max_rounds:
+            logger.info(f"Game should end: max rounds reached ({self.round_number}/{self.max_rounds})")
             return True
         
         # Check Scammer win condition: 3 fake headlines trusted
-        if game_state.get("fake_headlines_trusted", 0) >= 3:
+        if fake_trusted >= 3:
+            logger.info(f"Game should end: 3 fake headlines trusted ({fake_trusted})")
             return True
         
         # Check Truth Team win condition: 3 fake headlines flagged
-        if game_state.get("fake_headlines_flagged", 0) >= 3:
+        if fake_flagged >= 3:
+            logger.info(f"Game should end: 3 fake headlines flagged ({fake_flagged})")
             return True
         
         # Check if all players of one faction are shadow banned/eliminated
@@ -385,8 +402,10 @@ class RefinedGameStateMachine:
         
         # Game ends if one faction has no active players (only in multi-player)
         if active_truth_seekers == 0 or active_scammers == 0:
+            logger.info(f"Game should end: faction elimination (truth_seekers={active_truth_seekers}, scammers={active_scammers})")
             return True
         
+        logger.info("Game continues: no win conditions met")
         return False
     
     def get_game_status(self) -> Dict[str, Any]:

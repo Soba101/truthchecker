@@ -12,7 +12,6 @@ import uuid
 import asyncio
 
 from ..game.truth_wars_manager import TruthWarsManager
-from ..game.game_states import PhaseType
 from ..utils.logging_config import get_logger
 from ..database.models import User
 from ..database.database import DatabaseSession

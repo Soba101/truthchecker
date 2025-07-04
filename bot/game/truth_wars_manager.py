@@ -585,6 +585,9 @@ class TruthWarsManager:
             fake_headlines_trusted = state_machine.fake_headlines_trusted
             fake_headlines_flagged = state_machine.fake_headlines_flagged
         
+        # CRITICAL FIX: Get win progress data from game session
+        win_progress = game_session.get("win_progress", {})
+        
         return {
             "active_players": [pid for pid in game_session["players"].keys() 
                              if pid not in game_session["eliminated_players"]],
@@ -607,8 +610,11 @@ class TruthWarsManager:
                                                                     and self._can_player_vote(game_session, pid)]),
             "all_roles_assigned": len(game_session["player_roles"]) == len(game_session["players"]),
             "game_over": game_session.get("game_over", False),  # Use cached status instead of recalculating
-            "fake_headlines_trusted": fake_headlines_trusted,
-            "fake_headlines_flagged": fake_headlines_flagged,
+            # CRITICAL FIX: Pass both state machine counters AND game session win progress
+            "fake_headlines_trusted": max(fake_headlines_trusted, win_progress.get("fake_headlines_trusted", 0)),
+            "fake_headlines_flagged": max(fake_headlines_flagged, win_progress.get("fake_headlines_flagged", 0)),
+            "win_progress": win_progress,
+            "rounds_completed": win_progress.get("rounds_completed", 0),
             "player_reputation": game_session.get("player_reputation", {}),
             "shadow_banned_players": game_session.get("shadow_banned_players", {})
         }
@@ -849,6 +855,12 @@ class TruthWarsManager:
         # Update round counter and clear votes for next round
         game_session["round_number"] += 1
         game_session["votes"] = {}
+        
+        # CRITICAL FIX: Synchronize state machine round number with game session
+        # This ensures win condition checks use the correct round number
+        if "state_machine" in game_session:
+            game_session["state_machine"].round_number = game_session["round_number"]
+            logger.info(f"Synchronized state machine round number to {game_session['round_number']}")
     
     def _check_headline_win_conditions(self, game_session: Dict) -> bool:
         """Check headline-based win conditions as per design document."""
