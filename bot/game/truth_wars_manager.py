@@ -17,7 +17,7 @@ from ..database.models import (
 )
 from ..database.database import DatabaseSession
 from .roles import assign_roles, create_role_instance, Role
-from .game_states import GameStateMachine, PhaseType
+from .refined_game_states import RefinedGameStateMachine, PhaseType
 from ..utils.logging_config import get_logger, log_game_event
 from ..utils.config import get_settings
 from ..database.seed_data import get_media_literacy_tip
@@ -90,7 +90,7 @@ class TruthWarsManager:
                 "creator_id": creator_user_id,
                 "players": {},  # Don't auto-add creator - let them join manually
                 "player_roles": {},
-                "state_machine": GameStateMachine(),
+                "state_machine": RefinedGameStateMachine(),
                 "current_headline": None,
                 "round_number": 1,
                 "votes": {},
@@ -576,6 +576,15 @@ class TruthWarsManager:
         Returns:
             Dict: Complete game state
         """
+        # Get state machine counters if available
+        state_machine = game_session.get("state_machine")
+        fake_headlines_trusted = 0
+        fake_headlines_flagged = 0
+        
+        if state_machine:
+            fake_headlines_trusted = state_machine.fake_headlines_trusted
+            fake_headlines_flagged = state_machine.fake_headlines_flagged
+        
         return {
             "active_players": [pid for pid in game_session["players"].keys() 
                              if pid not in game_session["eliminated_players"]],
@@ -591,9 +600,17 @@ class TruthWarsManager:
             "force_start": game_session.get("force_start", False),
             "all_players_ready": False,  # TODO: Implement ready system
             "all_players_voted": len(game_session["votes"]) == len([pid for pid in game_session["players"].keys() 
-                                                                   if pid not in game_session["eliminated_players"]]),
+                                                                   if pid not in game_session["eliminated_players"] 
+                                                                   and self._can_player_vote(game_session, pid)]),
+            "all_eligible_voted": len(game_session["votes"]) == len([pid for pid in game_session["players"].keys() 
+                                                                    if pid not in game_session["eliminated_players"] 
+                                                                    and self._can_player_vote(game_session, pid)]),
             "all_roles_assigned": len(game_session["player_roles"]) == len(game_session["players"]),
-            "game_over": game_session.get("game_over", False)  # Use cached status instead of recalculating
+            "game_over": game_session.get("game_over", False),  # Use cached status instead of recalculating
+            "fake_headlines_trusted": fake_headlines_trusted,
+            "fake_headlines_flagged": fake_headlines_flagged,
+            "player_reputation": game_session.get("player_reputation", {}),
+            "shadow_banned_players": game_session.get("shadow_banned_players", {})
         }
     
     async def _handle_vote(self, game_session: Dict, voter_id: int, vote_data: Any) -> None:
@@ -690,20 +707,26 @@ class TruthWarsManager:
             transition_result = game_session["state_machine"].transition_phase(game_state)
             
             if transition_result:
-                # Handle phase-specific transitions
+                # Handle phase-specific transitions first
                 new_phase = transition_result["to_phase"]
                 
-                if new_phase == "news":
+                if new_phase == "headline_reveal":
                     await self._start_news_phase(game_session)
-                elif new_phase == "resolution":
+                elif new_phase == "round_results":
                     await self._resolve_voting(game_session)
                 elif new_phase == "snipe_opportunity":
                     # Send enhanced snipe opportunity message
                     await self._send_snipe_opportunity_message(game_session, getattr(self, '_bot_context', None))
+                
+                # CRITICAL: Send phase transition messages to chat
+                await self._handle_phase_transition(game_session, transition_result)
     
     async def _start_news_phase(self, game_session: Dict) -> None:
         """Start a new news phase with a fresh headline."""
         current_round = game_session["round_number"]
+        
+        # Clear any remaining votes from previous round (safeguard)
+        game_session["votes"] = {}
         
         # Reduce shadow ban durations at start of new round
         if current_round > 1:
@@ -723,11 +746,8 @@ class TruthWarsManager:
                 "explanation": headline.explanation
             }
             
-            # Send correct answer to current drunk player
-            await self._send_drunk_correct_answer(game_session)
-            
-            # Send info to Fact Checker (unless it's their no-info round)
-            await self._send_fact_checker_info(game_session)
+            # Note: Players must use /ability command to activate their special abilities
+            # No automatic ability activation
             
             # Add a notification for the bot to send voting interface
             game_session["pending_notifications"] = game_session.get("pending_notifications", [])
@@ -800,6 +820,13 @@ class TruthWarsManager:
                 # Update win progress for Truth Team
                 game_session["win_progress"]["fake_headlines_flagged"] += 1
             
+            # Update state machine counters for win conditions
+            if "state_machine" in game_session:
+                game_session["state_machine"].update_win_condition_counters(
+                    headline_was_fake=not headline_is_real,
+                    majority_trusted=majority_trusts
+                )
+            
             # Update player reputations based on votes
             vote_results = {
                 "headline_is_real": headline_is_real,
@@ -816,9 +843,11 @@ class TruthWarsManager:
                 self._trigger_game_end(game_session)
                 return
         
+        # Update completed rounds count BEFORE incrementing to next round
+        game_session["win_progress"]["rounds_completed"] = game_session["round_number"]
+        
         # Update round counter and clear votes for next round
         game_session["round_number"] += 1
-        game_session["win_progress"]["rounds_completed"] = game_session["round_number"] - 1
         game_session["votes"] = {}
     
     def _check_headline_win_conditions(self, game_session: Dict) -> bool:
@@ -1124,9 +1153,9 @@ class TruthWarsManager:
             
             # Import bot context from handlers - this is a bit hacky but needed for now
             # TODO: Pass bot context properly through the manager
-            bot_context = getattr(self, '_bot_context', None)
+            bot_context = self._get_bot_context_safely("phase transition")
             if not bot_context:
-                logger.warning("No bot context available for sending phase messages")
+                logger.error(f"Cannot send phase transition message for game {game_session.get('game_id')} - no bot context")
                 return
             
             # Send basic phase message
@@ -1159,7 +1188,7 @@ class TruthWarsManager:
                 # Send enhanced snipe opportunity message
                 await self._send_snipe_opportunity_message(game_session, bot_context)
             
-            elif new_phase == "resolution":
+            elif new_phase == "resolution" or new_phase == "round_results":
                 # Send headline resolution results
                 await self._send_headline_resolution(game_session, bot_context)
                 
@@ -1307,6 +1336,9 @@ class TruthWarsManager:
             # Add snipe timing information for player awareness
             await self._send_snipe_timing_info(game_session, bot_context)
             
+            # Send continue/end game options to game creator
+            await self._send_continue_end_options(game_session, bot_context)
+            
         except Exception as e:
             logger.error(f"Failed to send headline resolution: {e}")
             import traceback
@@ -1357,6 +1389,62 @@ class TruthWarsManager:
             logger.info(f"Sent snipe timing info for round {current_round}")
         except Exception as e:
             logger.error(f"Failed to send snipe timing info: {e}")
+    
+    async def _send_continue_end_options(self, game_session: Dict, bot_context) -> None:
+        """Send continue/end game options after resolution."""
+        try:
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+            
+            current_round = game_session["round_number"]
+            game_id = game_session["game_id"]
+            
+            # Check if we've reached max rounds or a win condition
+            win_progress = game_session["win_progress"]
+            has_winner = (win_progress["fake_headlines_trusted"] >= 3 or 
+                         win_progress["fake_headlines_flagged"] >= 3)
+            
+            if has_winner or current_round >= 5:
+                # Game should end - don't show continue option
+                end_message = (
+                    f"🎯 **Round {current_round} Complete**\n\n"
+                    f"The game will automatically end now due to win conditions or maximum rounds reached."
+                )
+                
+                await bot_context.bot.send_message(
+                    chat_id=game_session["chat_id"],
+                    text=end_message
+                )
+                return
+            
+            # Show continue/end options
+            keyboard = [
+                [
+                    InlineKeyboardButton("▶️ Continue Game", callback_data=f"continue_game_{game_id}"),
+                    InlineKeyboardButton("🛑 End Game", callback_data=f"end_game_{game_id}")
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            continue_message = (
+                f"🎯 **Round {current_round} Complete**\n\n"
+                f"📊 **Current Score:**\n"
+                f"• Fake headlines trusted: {win_progress['fake_headlines_trusted']}/3\n"
+                f"• Fake headlines flagged: {win_progress['fake_headlines_flagged']}/3\n"
+                f"• Rounds completed: {win_progress['rounds_completed']}/5\n\n"
+                f"🤔 **What's next?**\n"
+                f"Game Creator: Choose to continue or end the game."
+            )
+            
+            await bot_context.bot.send_message(
+                chat_id=game_session["chat_id"],
+                text=continue_message,
+                reply_markup=reply_markup
+            )
+            
+            logger.info(f"Sent continue/end options for game {game_id}")
+            
+        except Exception as e:
+            logger.error(f"Failed to send continue/end options: {e}")
     
     async def _send_game_end_results(self, game_session: Dict, bot_context) -> None:
         """Send final game results and role reveals."""
@@ -1550,14 +1638,32 @@ class TruthWarsManager:
             logger.error(f"Failed to check Ghost Viewer status: {e}")
     
     def _can_player_vote(self, game_session: Dict, player_id: int) -> bool:
-        """Check if player can vote (not Ghost Viewer)."""
+        """Check if player can vote (not Ghost Viewer or Shadow Banned)."""
+        # Check if player has enough reputation (not a Ghost Viewer)
         current_rp = game_session["player_reputation"].get(player_id, 3)
-        return current_rp > 0
+        if current_rp <= 0:
+            return False
+            
+        # Check if player is shadow banned
+        shadow_banned_players = game_session.get("shadow_banned_players", {})
+        if shadow_banned_players.get(player_id, 0) > 0:
+            return False
+            
+        return True
     
     def _can_player_use_ability(self, game_session: Dict, player_id: int) -> bool:
-        """Check if player can use abilities (not Ghost Viewer)."""
+        """Check if player can use abilities (not Ghost Viewer or Shadow Banned)."""
+        # Check if player has enough reputation (not a Ghost Viewer)
         current_rp = game_session["player_reputation"].get(player_id, 3)
-        return current_rp > 0
+        if current_rp <= 0:
+            return False
+            
+        # Check if player is shadow banned
+        shadow_banned_players = game_session.get("shadow_banned_players", {})
+        if shadow_banned_players.get(player_id, 0) > 0:
+            return False
+            
+        return True
     
     def _initialize_drunk_rotation(self, game_session: Dict) -> None:
         """Initialize the drunk role rotation system after roles are assigned."""
@@ -1827,6 +1933,361 @@ class TruthWarsManager:
         """Set the bot context for sending messages."""
         self._bot_context = bot_context
     
+    def _get_bot_context_safely(self, operation_name: str = "operation") -> Optional[Any]:
+        """
+        Safely get bot context with proper error handling.
+        
+        Args:
+            operation_name: Name of the operation for logging
+            
+        Returns:
+            Bot context or None if not available
+        """
+        bot_context = getattr(self, '_bot_context', None)
+        if not bot_context:
+            logger.error(f"Bot context not available for {operation_name} - messages cannot be sent")
+            # You could add recovery mechanisms here like:
+            # - Queue the message for later
+            # - Use a fallback messaging system
+            # - Trigger bot context re-initialization
+        return bot_context
+    
+    async def use_role_ability(self, game_id: str, user_id: int) -> Dict[str, Any]:
+        """
+        Use a player's role ability.
+        
+        Args:
+            game_id: Game ID
+            user_id: Player ID
+            
+        Returns:
+            Dict: Result of ability usage
+        """
+        try:
+            if game_id not in self.active_games:
+                return {"success": False, "message": "Game not found"}
+            
+            game_session = self.active_games[game_id]
+            
+            # Check if player is in the game
+            if user_id not in game_session["players"]:
+                return {"success": False, "message": "You are not in this game"}
+            
+            # Get player's role
+            role_info = game_session["player_roles"].get(user_id)
+            if not role_info:
+                return {"success": False, "message": "No role assigned"}
+            
+            role = role_info["role"]
+            current_round = game_session["round_number"]
+            
+            # Check if player can use abilities (not Ghost Viewer)
+            if not self._can_player_use_ability(game_session, user_id):
+                return {"success": False, "message": "Ghost Viewers (0 RP) cannot use abilities"}
+            
+            # Check if player is shadow banned
+            if self._is_player_shadow_banned(game_session, user_id):
+                return {"success": False, "message": "Shadow banned players cannot use abilities"}
+            
+            # Check if ability was already used this round
+            ability_usage_key = f"ability_used_round_{current_round}"
+            if game_session.get(ability_usage_key, {}).get(user_id, False):
+                return {"success": False, "message": "You have already used your ability this round"}
+            
+            # Check game phase - abilities can only be used during discussion phase
+            current_phase = game_session["state_machine"].get_current_phase_type()
+            if current_phase.value not in ["discussion", "headline_reveal"]:
+                return {"success": False, "message": "Abilities can only be used during headline reveal or discussion phase"}
+            
+            # Use role-specific ability
+            ability_result = await self._activate_role_ability(game_session, user_id, role)
+            
+            if ability_result["success"]:
+                # Mark ability as used this round
+                if ability_usage_key not in game_session:
+                    game_session[ability_usage_key] = {}
+                game_session[ability_usage_key][user_id] = True
+                
+                logger.info(f"Player {user_id} used role ability in game {game_id}, round {current_round}")
+            
+            return ability_result
+            
+        except Exception as e:
+            logger.error(f"Failed to use role ability - game_id: {game_id}, user_id: {user_id}, error: {str(e)}")
+            return {"success": False, "message": "Failed to use ability"}
+    
+    async def _activate_role_ability(self, game_session: Dict, user_id: int, role) -> Dict[str, Any]:
+        """
+        Activate the specific ability for a player's role.
+        
+        Args:
+            game_session: Current game session
+            user_id: Player ID
+            role: Role object
+            
+        Returns:
+            Dict: Result of ability activation
+        """
+        try:
+            current_headline = game_session.get("current_headline")
+            if not current_headline:
+                return {"success": False, "message": "No active headline to use ability on"}
+            
+            bot_context = getattr(self, '_bot_context', None)
+            if not bot_context:
+                return {"success": False, "message": "Bot context not available"}
+            
+            # Handle Fact Checker ability
+            if role.__class__.__name__ == "FactChecker":
+                return await self._activate_fact_checker_ability(game_session, user_id, role)
+            
+            # Handle Drunk ability
+            elif role.__class__.__name__ == "Drunk":
+                return await self._activate_drunk_ability(game_session, user_id, role)
+            
+            # Handle Scammer ability (info about headline)
+            elif role.__class__.__name__ == "Scammer":
+                return await self._activate_scammer_ability(game_session, user_id, role)
+            
+            # Handle other roles (no active abilities, just show info)
+            else:
+                abilities_text = "\n".join([f"• {ability}" for ability in role.get_abilities()])
+                
+                await bot_context.bot.send_message(
+                    chat_id=user_id,
+                    text=(
+                        f"🎭 **Your Role:** {role.name}\n\n"
+                        f"🔧 **Your Abilities:**\n{abilities_text}\n\n"
+                        f"📋 **Description:**\n{role.get_description()}\n\n"
+                        f"🎯 **Win Condition:**\n{role.get_win_condition()}"
+                    )
+                )
+                
+                return {"success": True, "message": "Role information sent"}
+                
+        except Exception as e:
+            logger.error(f"Failed to activate role ability: {e}")
+            return {"success": False, "message": "Failed to activate ability"}
+    
+    async def _activate_fact_checker_ability(self, game_session: Dict, user_id: int, role) -> Dict[str, Any]:
+        """Activate Fact Checker's information ability."""
+        try:
+            current_round = game_session["round_number"]
+            no_info_round = game_session.get("fact_checker_no_info_round")
+            current_headline = game_session.get("current_headline")
+            
+            bot_context = getattr(self, '_bot_context', None)
+            
+            # Check if this is the no-info round
+            if current_round == no_info_round:
+                # Send "no info" message
+                no_info_message = (
+                    f"🧠 **FACT CHECKER - NO INFO ROUND**\n\n"
+                    f"📰 **Headline:** {current_headline.get('text', 'Unknown headline')}\n\n"
+                    f"❓ **This round, you must rely on your own knowledge and analysis skills!**\n\n"
+                    f"🤔 You will not receive the correct answer this round.\n"
+                    f"💡 Use your critical thinking to evaluate this headline like everyone else.\n\n"
+                    f"🎯 **Tip:** Look for credible sources, check for bias, and consider the plausibility of the claim."
+                )
+                
+                await bot_context.bot.send_message(
+                    chat_id=user_id,
+                    text=no_info_message
+                )
+                
+                return {"success": True, "message": "This is your no-info round - no intel available"}
+                
+            else:
+                # Send correct answer as usual
+                headline_is_real = current_headline.get("is_real", True)
+                headline_text = current_headline.get("text", "Unknown headline")
+                explanation = current_headline.get("explanation", "No explanation available")
+                
+                correct_answer = "REAL" if headline_is_real else "FAKE"
+                fact_checker_message = (
+                    f"🧠 **FACT CHECKER INTEL**\n\n"
+                    f"📰 **Headline:** {headline_text}\n\n"
+                    f"🎯 **Correct Answer:** This headline is **{correct_answer}**\n\n"
+                    f"💡 **Explanation:** {explanation}\n\n"
+                    f"🤫 **Your job:** Guide the discussion subtly without revealing your role!\n"
+                    f"💭 Share your analysis in a way that seems natural and helps others reach the right conclusion."
+                )
+                
+                await bot_context.bot.send_message(
+                    chat_id=user_id,
+                    text=fact_checker_message
+                )
+                
+                return {"success": True, "message": "Fact checker intel sent"}
+                
+        except Exception as e:
+            logger.error(f"Failed to activate fact checker ability: {e}")
+            return {"success": False, "message": "Failed to get fact checker intel"}
+    
+    async def _activate_drunk_ability(self, game_session: Dict, user_id: int, role) -> Dict[str, Any]:
+        """Activate Drunk's information ability."""
+        try:
+            current_headline = game_session.get("current_headline")
+            bot_context = getattr(self, '_bot_context', None)
+            
+            headline_is_real = current_headline.get("is_real", True)
+            headline_text = current_headline.get("text", "Unknown headline")
+            explanation = current_headline.get("explanation", "No explanation available")
+            
+            # Get contextual educational tip based on headline
+            from bot.ai.headline_generator import get_media_literacy_tip
+            educational_tip = await get_media_literacy_tip()
+            
+            correct_answer = "REAL" if headline_is_real else "FAKE"
+            drunk_message = (
+                f"🧍 **DRUNK INSIDE INFO**\n\n"
+                f"📰 **Headline:** {headline_text}\n\n"
+                f"🎯 **Correct Answer:** This headline is **{correct_answer}**\n\n"
+                f"💡 **Explanation:** {explanation}\n\n"
+                f"📚 **YOUR TEACHING MISSION:**\n"
+                f"During discussion, share this media literacy tip with everyone:\n\n"
+                f"🔍 **{educational_tip.get('category', 'General').replace('_', ' ').title()} Tip:**\n"
+                f"💭 *\"{educational_tip.get('tip', 'Always verify sources before trusting information')}\"*\n\n"
+                f"🎓 **Why this matters:** {educational_tip.get('explanation', 'Critical thinking helps identify misinformation')}\n\n"
+                f"📢 **Remember:** Help others learn to spot fake news during the discussion!"
+            )
+            
+            await bot_context.bot.send_message(
+                chat_id=user_id,
+                text=drunk_message
+            )
+            
+            return {"success": True, "message": "Drunk intel and educational mission sent"}
+            
+        except Exception as e:
+            logger.error(f"Failed to activate drunk ability: {e}")
+            return {"success": False, "message": "Failed to get drunk intel"}
+    
+    async def _activate_scammer_ability(self, game_session: Dict, user_id: int, role) -> Dict[str, Any]:
+        """Activate Scammer's information ability."""
+        try:
+            current_headline = game_session.get("current_headline")
+            bot_context = getattr(self, '_bot_context', None)
+            
+            headline_is_real = current_headline.get("is_real", True)
+            headline_text = current_headline.get("text", "Unknown headline")
+            explanation = current_headline.get("explanation", "No explanation available")
+            
+            correct_answer = "REAL" if headline_is_real else "FAKE"
+            scammer_message = (
+                f"😈 **SCAMMER INTEL**\n\n"
+                f"📰 **Headline:** {headline_text}\n\n"
+                f"🎯 **Truth:** This headline is **{correct_answer}**\n\n"
+                f"💡 **Background:** {explanation}\n\n"
+                f"🎭 **Your Mission:**\n"
+                f"• If FAKE: Convince others it's REAL (get them to trust it)\n"
+                f"• If REAL: Convince others it's FAKE (get them to flag it)\n\n"
+                f"🤫 **Strategy:** Blend in with Truth Seekers while subtly steering the vote wrong\n"
+                f"💰 **Bonus:** +1 RP if majority votes incorrectly!"
+            )
+            
+            await bot_context.bot.send_message(
+                chat_id=user_id,
+                text=scammer_message
+            )
+            
+            return {"success": True, "message": "Scammer intel sent"}
+            
+        except Exception as e:
+            logger.error(f"Failed to activate scammer ability: {e}")
+            return {"success": False, "message": "Failed to get scammer intel"}
+    
+    def _is_player_shadow_banned(self, game_session: Dict, user_id: int) -> bool:
+        """Check if player is currently shadow banned."""
+        shadow_banned_players = game_session.get("shadow_banned_players", {})
+        
+        # Check if player is in shadow ban list with remaining rounds > 0
+        rounds_remaining = shadow_banned_players.get(user_id, 0)
+        return rounds_remaining > 0
+    
+    async def continue_game(self, game_id: str) -> Dict[str, Any]:
+        """
+        Continue the game to the next round.
+        
+        Args:
+            game_id: Game ID
+            
+        Returns:
+            Dict: Result of continue operation
+        """
+        try:
+            if game_id not in self.active_games:
+                return {"success": False, "message": "Game not found"}
+            
+            game_session = self.active_games[game_id]
+            
+            # Check if game can continue
+            current_round = game_session["round_number"]
+            win_progress = game_session["win_progress"]
+            
+            # Check win conditions
+            has_winner = (win_progress["fake_headlines_trusted"] >= 3 or 
+                         win_progress["fake_headlines_flagged"] >= 3)
+            
+            if has_winner:
+                return {"success": False, "message": "Game already has a winner"}
+            
+            if current_round >= 5:
+                return {"success": False, "message": "Maximum rounds reached"}
+            
+            # Force transition to news phase for next round
+            game_state = self._get_game_state(game_session)
+            game_session["state_machine"].force_transition(PhaseType.HEADLINE_REVEAL, game_state)
+            
+            # Start the next news phase
+            await self._start_news_phase(game_session)
+            
+            logger.info(f"Game {game_id} continued to round {game_session['round_number']}")
+            
+            return {"success": True, "message": f"Game continued to round {game_session['round_number']}"}
+            
+        except Exception as e:
+            logger.error(f"Failed to continue game {game_id}: {e}")
+            return {"success": False, "message": "Failed to continue game"}
+    
+    async def end_game(self, game_id: str) -> Dict[str, Any]:
+        """
+        End the game immediately.
+        
+        Args:
+            game_id: Game ID
+            
+        Returns:
+            Dict: Result of end operation
+        """
+        try:
+            if game_id not in self.active_games:
+                return {"success": False, "message": "Game not found"}
+            
+            game_session = self.active_games[game_id]
+            
+            # Set game over status
+            game_session["game_over"] = True
+            game_session["winner"] = "game_ended_early"
+            game_session["win_reason"] = "Game ended by creator"
+            
+            # Force transition to game end phase
+            game_state = self._get_game_state(game_session)
+            game_session["state_machine"].force_transition(PhaseType.GAME_END, game_state)
+            
+            # Send final results
+            bot_context = getattr(self, '_bot_context', None)
+            if bot_context:
+                await self._send_game_end_results(game_session, bot_context)
+            
+            logger.info(f"Game {game_id} ended early by creator")
+            
+            return {"success": True, "message": "Game ended successfully"}
+            
+        except Exception as e:
+            logger.error(f"Failed to end game {game_id}: {e}")
+            return {"success": False, "message": "Failed to end game"}
+    
     async def _game_loop(self, game_id: str) -> None:
         """
         Main game loop that handles automatic phase transitions.
@@ -1857,16 +2318,16 @@ class TruthWarsManager:
                         await self._handle_phase_transition(game_session, transition_result)
                         
                         # Handle specific phase transitions
-                        if new_phase == "news":
+                        if new_phase == "headline_reveal":
                             await self._start_news_phase(game_session)
-                        elif new_phase == "resolution":
+                        elif new_phase == "round_results":
                             await self._resolve_voting(game_session)
                         elif new_phase == "snipe_opportunity":
                             # Send enhanced snipe opportunity message
                             await self._send_snipe_opportunity_message(game_session, getattr(self, '_bot_context', None))
                 
-                # Wait 5 seconds before next check
-                await asyncio.sleep(5)
+                # Wait 2 seconds before next check (more responsive)
+                await asyncio.sleep(2)
                 
         except Exception as e:
             logger.error(f"Game loop error for game {game_id}: {e}")

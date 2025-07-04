@@ -319,10 +319,10 @@ class TruthWarsGame(Base):
     current_phase = Column(Enum(GamePhase), default=GamePhase.LOBBY, doc="Current game phase")
     phase_end_time = Column(DateTime, nullable=True, doc="When current phase ends")
     
-    # Phase timing configuration
-    discussion_duration = Column(Integer, default=180, doc="Discussion time in seconds (3 min)")
-    voting_duration = Column(Integer, default=120, doc="Voting time in seconds (2 min)")
-    resolution_duration = Column(Integer, default=60, doc="Resolution viewing time (1 min)")
+    # Phase timing configuration (optimized for faster gameplay)
+    discussion_duration = Column(Integer, default=120, doc="Discussion time in seconds (2 min)")
+    voting_duration = Column(Integer, default=45, doc="Voting time in seconds (45 sec)")
+    resolution_duration = Column(Integer, default=30, doc="Resolution viewing time (30 sec)")
     
     # Educational features
     drunk_rotation_order = Column(JSON, default=list, doc="Order of Drunk role rotation among Normies")

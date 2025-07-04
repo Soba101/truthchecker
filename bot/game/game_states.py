@@ -183,7 +183,7 @@ class RoleAssignmentPhase(GamePhase):
     """
     
     def __init__(self):
-        super().__init__(PhaseType.ROLE_ASSIGNMENT, duration_seconds=60)
+        super().__init__(PhaseType.ROLE_ASSIGNMENT, duration_seconds=45)
     
     def _on_start(self) -> Dict[str, Any]:
         """Start role assignment."""
@@ -218,7 +218,7 @@ class NewsPhase(GamePhase):
     """
     
     def __init__(self):
-        super().__init__(PhaseType.NEWS, duration_seconds=30)
+        super().__init__(PhaseType.NEWS, duration_seconds=20)
     
     def _on_start(self) -> Dict[str, Any]:
         """Present the headline."""
@@ -256,7 +256,7 @@ class DiscussionPhase(GamePhase):
     """
     
     def __init__(self):
-        super().__init__(PhaseType.DISCUSSION, duration_seconds=180)  # 3 minutes
+        super().__init__(PhaseType.DISCUSSION, duration_seconds=120)  # 2 minutes
     
     def _on_start(self) -> Dict[str, Any]:
         """Start discussion - message now combined with headline."""
@@ -308,7 +308,7 @@ class VotingPhase(GamePhase):
     """
     
     def __init__(self):
-        super().__init__(PhaseType.VOTING, duration_seconds=120)  # 2 minutes
+        super().__init__(PhaseType.VOTING, duration_seconds=45)  # 45 seconds
     
     def _on_start(self) -> Dict[str, Any]:
         """Start voting."""
@@ -350,7 +350,7 @@ class ResolutionPhase(GamePhase):
     """
     
     def __init__(self):
-        super().__init__(PhaseType.RESOLUTION, duration_seconds=45)
+        super().__init__(PhaseType.RESOLUTION, duration_seconds=30)
     
     def _on_start(self) -> Dict[str, Any]:
         """Start resolution."""

@@ -387,16 +387,23 @@ async def ability_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         return
     
-    # Show role abilities
-    abilities_text = "\n".join([f"• {ability}" for ability in role_info['abilities']])
+    # Set bot context for the manager
+    truth_wars_manager.set_bot_context(context)
     
-    await update.message.reply_text(
-        f"🎭 **Your Role:** {role_info['role_name']}\n\n"
-        f"🔧 **Available Abilities:**\n{abilities_text}\n\n"
-        f"📋 **Description:**\n{role_info['description']}\n\n"
-        f"🎯 **Win Condition:**\n{role_info['win_condition']}",
-        parse_mode='Markdown'
-    )
+    # Attempt to use the role ability
+    ability_result = await truth_wars_manager.use_role_ability(game_id, user_id)
+    
+    if ability_result["success"]:
+        # Ability was successfully used
+        await update.message.reply_text(
+            f"✅ {ability_result['message']}",
+            parse_mode='Markdown'
+        )
+    else:
+        # Ability couldn't be used or already used
+        await update.message.reply_text(
+            f"❌ {ability_result['message']}"
+        )
 
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -439,18 +446,20 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_text("❌ Game not found.")
             return
         
-        phase_emoji = {
-            "lobby": "🎮",
-            "role_assignment": "🎭", 
-            "news": "📰",
+        # Phase emoji mapping for visual feedback
+        phase_emojis = {
+            "lobby": "🏠",
+            "role_assignment": "🎭",
+            "headline_reveal": "📰",
             "discussion": "💬",
             "voting": "🗳️",
-            "resolution": "⚖️",
-            "game_end": "🎉"
+            "round_results": "⚖️",
+            "snipe_opportunity": "🎯",
+            "game_end": "🏁"
         }
         
         phase = game_status['phase']
-        emoji = phase_emoji.get(phase, "🎲")
+        emoji = phase_emojis.get(phase, "🎲")
         time_remaining = game_status['time_remaining']
         
         status_text = (
@@ -518,7 +527,7 @@ async def send_role_assignments(context: ContextTypes.DEFAULT_TYPE, game_id: str
                         role_message += "• No special abilities\n"
                     
                     role_message += f"\n🎮 Game ID: {game_id}\n"
-                    role_message += f"\n💡 Use /ability to see detailed ability info during the game!"
+                    role_message += f"\n💡 Use /ability to activate your special abilities during the game!"
                     
                     # Send private message to player
                     await context.bot.send_message(
@@ -564,6 +573,10 @@ async def handle_truth_wars_callback(update: Update, context: ContextTypes.DEFAU
             await handle_trust_vote(update, context)
         elif callback_data.startswith("vote_flag_"):
             await handle_flag_vote(update, context)
+        elif callback_data.startswith("continue_game_"):
+            await handle_continue_game_callback(update, context)
+        elif callback_data.startswith("end_game_"):
+            await handle_end_game_callback(update, context)
         else:
             logger.warning(f"Unhandled callback data: {callback_data}")
             await query.answer("❌ Unknown action", show_alert=True)
@@ -788,6 +801,108 @@ async def trigger_game_progression(context: ContextTypes.DEFAULT_TYPE, game_id: 
         logger.error(f"Failed to run game progression for {game_id}: {e}")
         import traceback
         traceback.print_exc()
+
+
+async def handle_continue_game_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle continue game button press."""
+    query = update.callback_query
+    user_id = update.effective_user.id
+    callback_data = query.data
+    
+    # Extract game ID from callback data
+    game_id = callback_data.split('_')[2]
+    
+    try:
+        # Set bot context for the manager
+        truth_wars_manager.set_bot_context(context)
+        
+        # Check if user is the game creator
+        if game_id not in truth_wars_manager.active_games:
+            await query.answer("❌ Game not found", show_alert=True)
+            return
+            
+        game_session = truth_wars_manager.active_games[game_id]
+        creator_id = game_session["creator_id"]
+        
+        if user_id != creator_id:
+            await query.answer("❌ Only the game creator can continue the game", show_alert=True)
+            return
+            
+        # Continue the game to next round
+        result = await truth_wars_manager.continue_game(game_id)
+        
+        if result["success"]:
+            await query.answer("▶️ Game continued to next round!", show_alert=False)
+            
+            # Send confirmation to chat
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="▶️ **Game Continued!**\n\nStarting next round..."
+            )
+            
+            # Edit the message to remove buttons
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+            except Exception:
+                pass  # Message might be too old to edit
+                
+        else:
+            await query.answer(f"❌ {result.get('message', 'Failed to continue game')}", show_alert=True)
+            
+    except Exception as e:
+        logger.error(f"Failed to handle continue game: {e}")
+        await query.answer("❌ Failed to continue game", show_alert=True)
+
+
+async def handle_end_game_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle end game button press."""
+    query = update.callback_query
+    user_id = update.effective_user.id
+    callback_data = query.data
+    
+    # Extract game ID from callback data
+    game_id = callback_data.split('_')[2]
+    
+    try:
+        # Set bot context for the manager
+        truth_wars_manager.set_bot_context(context)
+        
+        # Check if user is the game creator
+        if game_id not in truth_wars_manager.active_games:
+            await query.answer("❌ Game not found", show_alert=True)
+            return
+            
+        game_session = truth_wars_manager.active_games[game_id]
+        creator_id = game_session["creator_id"]
+        
+        if user_id != creator_id:
+            await query.answer("❌ Only the game creator can end the game", show_alert=True)
+            return
+            
+        # End the game
+        result = await truth_wars_manager.end_game(game_id)
+        
+        if result["success"]:
+            await query.answer("🛑 Game ended!", show_alert=False)
+            
+            # Send confirmation to chat
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="🛑 **Game Ended by Creator**\n\nShowing final results..."
+            )
+            
+            # Edit the message to remove buttons
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+            except Exception:
+                pass  # Message might be too old to edit
+                
+        else:
+            await query.answer(f"❌ {result.get('message', 'Failed to end game')}", show_alert=True)
+            
+    except Exception as e:
+        logger.error(f"Failed to handle end game: {e}")
+        await query.answer("❌ Failed to end game", show_alert=True)
 
 
 async def ensure_user_exists(telegram_user) -> None:

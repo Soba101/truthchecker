@@ -45,14 +45,14 @@ class RefinedGameStateMachine:
         self.round_number = 0
         self.max_rounds = 5
         self.phase_durations = {
-            PhaseType.LOBBY: 300,  # 5 minutes to join
-            PhaseType.ROLE_ASSIGNMENT: 60,  # 1 minute to read roles
-            PhaseType.HEADLINE_REVEAL: 30,  # 30 seconds to read headline
-            PhaseType.DISCUSSION: 180,  # 3 minutes for discussion
-            PhaseType.VOTING: 60,  # 1 minute for Trust/Flag voting
-            PhaseType.ROUND_RESULTS: 45,  # 45 seconds to see results
-            PhaseType.SNIPE_OPPORTUNITY: 90,  # 1.5 minutes for snipe attempts
-            PhaseType.GAME_END: 120  # 2 minutes to see final results
+            PhaseType.LOBBY: 180,  # 3 minutes to join (reduced from 5)
+            PhaseType.ROLE_ASSIGNMENT: 45,  # 45 seconds to read roles (reduced from 60)
+            PhaseType.HEADLINE_REVEAL: 20,  # 20 seconds to read headline (reduced from 30)
+            PhaseType.DISCUSSION: 120,  # 2 minutes for discussion (reduced from 3)
+            PhaseType.VOTING: 45,  # 45 seconds for Trust/Flag voting (reduced from 60)
+            PhaseType.ROUND_RESULTS: 30,  # 30 seconds to see results (reduced from 45)
+            PhaseType.SNIPE_OPPORTUNITY: 60,  # 1 minute for snipe attempts (reduced from 90)
+            PhaseType.GAME_END: 60  # 1 minute to see final results (reduced from 120)
         }
         
         # Track game state for win conditions
@@ -101,7 +101,7 @@ class RefinedGameStateMachine:
         elif self.current_phase == PhaseType.ROLE_ASSIGNMENT:
             # Transition when all roles assigned and time passed
             return (game_state.get("all_roles_assigned", False) and 
-                   time_elapsed >= 30)  # Minimum 30 seconds to read roles
+                   time_elapsed >= 20)  # Minimum 20 seconds to read roles
                    
         elif self.current_phase == PhaseType.HEADLINE_REVEAL:
             # Always transition after time limit
@@ -359,6 +359,13 @@ class RefinedGameStateMachine:
             return True
         
         # Check if all players of one faction are shadow banned/eliminated
+        # BUT only if there are players from both factions (multi-player mode)
+        total_players = len(game_state.get("player_roles", {}))
+        
+        # In single-player mode, don't end game based on faction balance
+        if total_players == 1:
+            return False
+        
         active_truth_seekers = 0
         active_scammers = 0
         
@@ -376,7 +383,7 @@ class RefinedGameStateMachine:
             elif role and role.faction == "misinformers":
                 active_scammers += 1
         
-        # Game ends if one faction has no active players
+        # Game ends if one faction has no active players (only in multi-player)
         if active_truth_seekers == 0 or active_scammers == 0:
             return True
         
