@@ -12,6 +12,8 @@ from typing import Optional
 
 from telegram import Update, BotCommand
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
+from telegram.constants import ParseMode
+from telegram.ext import Defaults  # For setting default parse mode globally
 
 from .handlers.command_handlers import (
     start_command, help_command, play_command, stats_command, leaderboard_command
@@ -221,8 +223,14 @@ async def main() -> None:
     try:
         logger.info("Starting Truth Wars Bot - Refined Educational System")
         
-        # Create application
-        bot.application = Application.builder().token(bot.settings.telegram_bot_token).build()
+        # Create application with global Markdown parse mode so **text** renders bold
+        defaults = Defaults(parse_mode=ParseMode.MARKDOWN)
+        bot.application = (
+            Application.builder()
+            .token(bot.settings.telegram_bot_token)
+            .defaults(defaults)
+            .build()
+        )
         
         # Initialize database and seed data
         await bot.initialize_database()

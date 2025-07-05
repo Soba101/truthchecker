@@ -22,6 +22,7 @@ from ..utils.logging_config import get_logger, log_game_event
 from ..utils.config import get_settings
 from ..database.seed_data import get_media_literacy_tip
 from ..ai.headline_generator import get_headline_generator
+from sqlalchemy.sql import func
 
 # Setup logger
 logger = get_logger(__name__)
@@ -115,6 +116,12 @@ class TruthWarsManager:
                     "fake_headlines_flagged": 0,
                     "real_headlines_trusted": 0,
                     "real_headlines_flagged": 0
+                },
+                
+                # v3 team scoring (first to 3 points)
+                "team_scores": {
+                    "truth": 0,
+                    "scam": 0
                 },
                 
                 # Drunk role rotation tracking
@@ -299,6 +306,9 @@ class TruthWarsManager:
             # Initialize fact checker balance (one round without info)
             self._initialize_fact_checker_balance(game_session)
             
+            # Prepare headline pool according to v3 distribution rules (Set A/B)
+            await self._prepare_headline_set(game_session)
+            
             # Transition to role assignment phase
             game_session["state_machine"].force_transition(
                 PhaseType.ROLE_ASSIGNMENT, 
@@ -469,15 +479,26 @@ class TruthWarsManager:
             # Log the action
             await self._log_action(game_id, user_id, action, data)
             
-            # Process action through state machine
-            game_state = self._get_game_state(game_session)
-            result = game_session["state_machine"].handle_action(action, user_id, data, game_state)
+            # For ability usage we bypass state-machine validation (it only knows 'snipe_player')
+            if action == "use_ability":
+                result = {"success": True}
+            else:
+                game_state = self._get_game_state(game_session)
+                result = game_session["state_machine"].handle_action(action, user_id, data, game_state)
             
             # Handle specific actions
             if action == "vote" and result.get("success"):
                 await self._handle_vote(game_session, user_id, data)
             elif action == "vote_headline" and result.get("success"):
                 await self._handle_vote(game_session, user_id, data)
+            elif action == "vote_player" and result.get("success"):
+                # Record player accusation vote in game_session['player_votes']
+                if "player_votes" not in game_session:
+                    game_session["player_votes"] = {}
+                if user_id not in game_session["player_votes"]:
+                    game_session["player_votes"][user_id] = data["target_id"]
+                # Optionally, log the vote
+                logger.info(f"Player {user_id} voted for player {data['target_id']} as spreading misinformation.")
             elif action == "use_ability" and result.get("success"):
                 await self._handle_ability_use(game_session, user_id, data)
             
@@ -572,7 +593,7 @@ class TruthWarsManager:
         
         Args:
             game_session: Current game session data
-            
+        
         Returns:
             Dict: Complete game state
         """
@@ -580,14 +601,30 @@ class TruthWarsManager:
         state_machine = game_session.get("state_machine")
         fake_headlines_trusted = 0
         fake_headlines_flagged = 0
-        
         if state_machine:
             fake_headlines_trusted = state_machine.fake_headlines_trusted
             fake_headlines_flagged = state_machine.fake_headlines_flagged
-        
         # CRITICAL FIX: Get win progress data from game session
         win_progress = game_session.get("win_progress", {})
-        
+
+        # --- CRITICAL: Use correct vote dict depending on phase ---
+        current_phase = None
+        if "state_machine" in game_session:
+            current_phase = game_session["state_machine"].get_current_phase_type().value
+        # Default to headline voting
+        vote_dict = game_session.get("votes", {})
+        if current_phase == "player_voting":
+            # During player accusation voting, use player_votes
+            vote_dict = game_session.get("player_votes", {})
+        # Compute eligible voters (not eliminated, not ghost, not shadow banned)
+        eligible_voters = [
+            pid for pid in game_session["players"].keys()
+            if pid not in game_session["eliminated_players"]
+            and self._can_player_vote(game_session, pid)
+        ]
+        all_players_voted = len(vote_dict) == len(eligible_voters)
+        all_eligible_voted = all_players_voted
+        # --- END CRITICAL FIX ---
         return {
             "active_players": [pid for pid in game_session["players"].keys() 
                              if pid not in game_session["eliminated_players"]],
@@ -602,12 +639,9 @@ class TruthWarsManager:
             "game_effects": game_session["game_effects"],
             "force_start": game_session.get("force_start", False),
             "all_players_ready": False,  # TODO: Implement ready system
-            "all_players_voted": len(game_session["votes"]) == len([pid for pid in game_session["players"].keys() 
-                                                                   if pid not in game_session["eliminated_players"] 
-                                                                   and self._can_player_vote(game_session, pid)]),
-            "all_eligible_voted": len(game_session["votes"]) == len([pid for pid in game_session["players"].keys() 
-                                                                    if pid not in game_session["eliminated_players"] 
-                                                                    and self._can_player_vote(game_session, pid)]),
+            # Use correct vote dict for voting checks
+            "all_players_voted": all_players_voted,
+            "all_eligible_voted": all_eligible_voted,
             "all_roles_assigned": len(game_session["player_roles"]) == len(game_session["players"]),
             "game_over": game_session.get("game_over", False),  # Use cached status instead of recalculating
             # CRITICAL FIX: Pass both state machine counters AND game session win progress
@@ -616,7 +650,9 @@ class TruthWarsManager:
             "win_progress": win_progress,
             "rounds_completed": win_progress.get("rounds_completed", 0),
             "player_reputation": game_session.get("player_reputation", {}),
-            "shadow_banned_players": game_session.get("shadow_banned_players", {})
+            "shadow_banned_players": game_session.get("shadow_banned_players", {}),
+            # v3 team scoring (first to 3 points)
+            "team_scores": game_session.get("team_scores", {"truth": 0, "scam": 0}),
         }
     
     async def _handle_vote(self, game_session: Dict, voter_id: int, vote_data: Any) -> None:
@@ -710,12 +746,18 @@ class TruthWarsManager:
 
     def _is_snipe_round(self, round_number: int) -> bool:
         """Check if current round allows snipe abilities."""
-        return round_number in [2, 4]
+        return round_number in [1, 2, 3, 4]
     
     async def _check_phase_transition(self, game_session: Dict) -> None:
         """Check if current phase should transition."""
         game_state = self._get_game_state(game_session)
-        logger.info(f"_check_phase_transition: phase={game_session['state_machine'].get_current_phase_type().value}, votes={len(game_session['votes'])}, all_eligible_voted={game_state.get('all_eligible_voted')}, time_remaining={game_session['state_machine'].get_time_remaining()}")
+        # CRITICAL FIX: Log the correct vote count for the current phase
+        current_phase = game_session['state_machine'].get_current_phase_type().value
+        if current_phase == "player_voting":
+            vote_count = len(game_session.get("player_votes", {}))
+        else:
+            vote_count = len(game_session.get("votes", {}))
+        logger.info(f"_check_phase_transition: phase={current_phase}, votes={vote_count}, all_eligible_voted={game_state.get('all_eligible_voted')}, time_remaining={game_session['state_machine'].get_time_remaining()}")
         if game_session["state_machine"].can_transition(game_state):
             logger.info("Phase can transition. Calling transition_phase.")
             transition_result = game_session["state_machine"].transition_phase(game_state)
@@ -737,6 +779,14 @@ class TruthWarsManager:
     
     async def _start_news_phase(self, game_session: Dict) -> None:
         """Start a new news phase with a fresh headline."""
+        # (REMOVED) Do NOT increment round_number here. It will be incremented just before this function is called.
+        # game_session["round_number"] += 1
+        if "state_machine" in game_session:
+            # Overwrite the session's round_number with the authoritative value
+            # from the state machine. This prevents the round counter from being
+            # reset to 1 every time a new headline starts.
+            game_session["round_number"] = game_session["state_machine"].round_number
+            logger.info(f"Synchronized session round number to {game_session['round_number']}")
         current_round = game_session["round_number"]
         
         # Clear any remaining votes from previous round (safeguard)
@@ -750,7 +800,19 @@ class TruthWarsManager:
         if current_round > 1:
             await self._rotate_drunk_role(game_session)
         
-        headline = await self.get_random_headline()
+        # v3: pop headline from prepared queue first; fallback to generator
+        headline_data = None
+        queue = game_session.get("headline_queue", [])
+        if queue:
+            headline_data = queue.pop(0)
+            # If we popped a raw Headline object previously stored, keep object format consistent
+            if isinstance(headline_data, dict):
+                headline = headline_data["obj"]
+            else:
+                headline = headline_data
+        else:
+            headline = await self.get_random_headline()
+        
         if headline:
             game_session["current_headline"] = {
                 "id": headline.id,
@@ -809,7 +871,12 @@ class TruthWarsManager:
                     weighted_flag_votes += vote_weight
         
         # Determine majority vote using weighted counts (Influencer vote counts as 2)
-        majority_trusts = weighted_trust_votes > weighted_flag_votes
+        if weighted_trust_votes == weighted_flag_votes:
+            # Tie – no side scores this round
+            logger.info("Voting tie detected – no points awarded this round")
+            majority_trusts = None
+        else:
+            majority_trusts = weighted_trust_votes > weighted_flag_votes
         
         # Log vote weights for debugging
         logger.info(f"Vote count - Trust: {len(trust_voters)} voters ({weighted_trust_votes} weighted), Flag: {len(flag_voters)} voters ({weighted_flag_votes} weighted)")
@@ -821,18 +888,23 @@ class TruthWarsManager:
             headline_is_real = current_headline.get("is_real", True)
             
             # Update headline results tracking
-            if headline_is_real and majority_trusts:
-                game_session["headline_results"]["real_headlines_trusted"] += 1
-            elif headline_is_real and not majority_trusts:
-                game_session["headline_results"]["real_headlines_flagged"] += 1
-            elif not headline_is_real and majority_trusts:
-                game_session["headline_results"]["fake_headlines_trusted"] += 1
-                # Update win progress for Scammers
-                game_session["win_progress"]["fake_headlines_trusted"] += 1
-            elif not headline_is_real and not majority_trusts:
-                game_session["headline_results"]["fake_headlines_flagged"] += 1
-                # Update win progress for Truth Team
-                game_session["win_progress"]["fake_headlines_flagged"] += 1
+            if majority_trusts is not None:
+                truth_point = (headline_is_real and majority_trusts) or (not headline_is_real and not majority_trusts)
+                scam_point = not truth_point
+                if truth_point:
+                    game_session["team_scores"]["truth"] += 1
+                elif scam_point:
+                    game_session["team_scores"]["scam"] += 1
+
+                # Keep detailed results for analytics (optional)
+                if headline_is_real and majority_trusts:
+                    game_session["headline_results"]["real_headlines_trusted"] += 1
+                elif headline_is_real and not majority_trusts:
+                    game_session["headline_results"]["real_headlines_flagged"] += 1
+                elif not headline_is_real and majority_trusts:
+                    game_session["headline_results"]["fake_headlines_trusted"] += 1
+                else:
+                    game_session["headline_results"]["fake_headlines_flagged"] += 1
             
             # Update state machine counters for win conditions
             if "state_machine" in game_session:
@@ -851,24 +923,24 @@ class TruthWarsManager:
             await self._update_player_reputation(game_session, vote_results)
             
             # Check for win conditions after reputation update
-            if self._check_headline_win_conditions(game_session):
-                # Cache the game over status to prevent repeated checks
+            if game_session["team_scores"]["truth"] >= 3:
+                game_session["winner"] = "truth_seekers"
+                game_session["win_reason"] = "Truth Team reached 3 points"
+                game_session["game_over"] = True
+                self._trigger_game_end(game_session)
+                return
+            if game_session["team_scores"]["scam"] >= 3:
+                game_session["winner"] = "misinformers"
+                game_session["win_reason"] = "Scammers reached 3 points"
                 game_session["game_over"] = True
                 self._trigger_game_end(game_session)
                 return
         
         # Update completed rounds count BEFORE incrementing to next round
         game_session["win_progress"]["rounds_completed"] = game_session["round_number"]
-        
-        # Update round counter and clear votes for next round
-        game_session["round_number"] += 1
-        game_session["votes"] = {}
-        
-        # CRITICAL FIX: Synchronize state machine round number with game session
-        # This ensures win condition checks use the correct round number
-        if "state_machine" in game_session:
-            game_session["state_machine"].round_number = game_session["round_number"]
-            logger.info(f"Synchronized state machine round number to {game_session['round_number']}")
+        # IMPORTANT: Do NOT clear the votes here.
+        # They are still needed by _send_headline_resolution to show the voting breakdown.
+        # They will be cleared after the resolution message has been delivered.
     
     def _check_headline_win_conditions(self, game_session: Dict) -> bool:
         """Check headline-based win conditions as per design document."""
@@ -1000,6 +1072,12 @@ class TruthWarsManager:
             
             logger.info(f"Game {game_session['game_id']} ended: {game_session.get('win_reason', 'Unknown reason')}")
             
+            # Send final summary to main chat asynchronously
+            bot_context = self._get_bot_context_safely("game end summary")
+            if bot_context:
+                import asyncio
+                asyncio.create_task(self._send_game_end_results(game_session, bot_context))
+         
         except Exception as e:
             logger.error(f"Failed to trigger game end: {e}")
     
@@ -1099,7 +1177,7 @@ class TruthWarsManager:
             logger.error(f"Failed to apply ability effects: {e}")
     
     async def _apply_shadow_ban(self, game_session: Dict, player_id: int, rounds: int = 1) -> None:
-        """Apply shadow ban to a player for specified number of rounds."""
+        """Apply a shadow ban to a player for a certain number of rounds."""
         try:
             # Add player to shadow ban tracking
             game_session["shadow_banned_players"][player_id] = rounds
@@ -1125,6 +1203,11 @@ class TruthWarsManager:
                 )
             
             logger.info(f"Player {player_id} shadow banned for {rounds} rounds")
+            
+            # v3: If the banned player currently holds Drunk hint, mark for reassignment next round
+            drunk_rot = game_session.get("drunk_rotation", {})
+            if drunk_rot.get("current_drunk_id") == player_id:
+                drunk_rot["current_drunk_id"] = None  # Cleared; _rotate_drunk_role will reassign
             
         except Exception as e:
             logger.error(f"Failed to apply shadow ban to player {player_id}: {e}")
@@ -1157,25 +1240,17 @@ class TruthWarsManager:
         """Handle phase transition by sending appropriate messages to chat."""
         try:
             from ..handlers.truth_wars_handlers import send_headline_voting
-            
             new_phase = transition_result["to_phase"]
             start_result = transition_result.get("start_result", {})
             message = start_result.get("message")
-            
-            # Get chat ID from bot context
             chat_id = game_session.get("chat_id")
             if not chat_id:
                 logger.error(f"No chat_id found for game {game_session.get('game_id')}")
                 return
-            
-            # Import bot context from handlers - this is a bit hacky but needed for now
-            # TODO: Pass bot context properly through the manager
             bot_context = self._get_bot_context_safely("phase transition")
             if not bot_context:
                 logger.error(f"Cannot send phase transition message for game {game_session.get('game_id')} - no bot context")
                 return
-            
-            # Send basic phase message if present
             if message:
                 await bot_context.bot.send_message(
                     chat_id=chat_id,
@@ -1183,39 +1258,23 @@ class TruthWarsManager:
                 )
             else:
                 logger.info(f"No generic phase message for phase {new_phase}, proceeding to special-case handler.")
-            
             # Handle special cases for specific phases
             if new_phase == "discussion":
-                # Send voting buttons for headline during discussion phase
-                current_headline = game_session.get("current_headline")
-                if current_headline:
-                    # Use chat_id instead of non-existent session_id
-                    await send_headline_voting(bot_context, game_session["chat_id"], current_headline)
-                # Remind drunk player to share educational tip
+                # Headline will be sent via pending notification loop to avoid duplicates
                 await self._remind_drunk_to_teach(game_session, bot_context)
-            
             elif new_phase == "voting":
-                # Send player voting interface
-                alive_players = [
-                    player_data for pid, player_data in game_session["players"].items() 
-                    if pid not in game_session["eliminated_players"]
-                ]
-                if len(alive_players) > 1:  # Only if there are players to vote for
-                    await self._send_player_voting_interface(game_session, bot_context)
-            
+                pass  # No longer send player voting interface here
             elif new_phase == "snipe_opportunity":
-                # Send enhanced snipe opportunity message
                 await self._send_snipe_opportunity_message(game_session, bot_context)
-            
             elif new_phase == "resolution" or new_phase == "round_results":
-                # Send headline resolution results
                 logger.info(f"Sending round results for phase {new_phase}")
                 await self._send_headline_resolution(game_session, bot_context)
-            
+            elif new_phase == "await_continue":
+                await self._send_continue_end_options(game_session, bot_context)
             elif new_phase == "game_end":
-                # Send final results and role reveals
                 await self._send_game_end_results(game_session, bot_context)
-        
+            # --- CRITICAL: Handle PLAYER_VOTING phase ---
+            # Player voting phase removed from flow
         except Exception as e:
             logger.error(f"Failed to handle phase transition: {e}")
             import traceback
@@ -1262,107 +1321,89 @@ class TruthWarsManager:
             if not current_headline:
                 logger.warning("No current headline for resolution")
                 return
-                
-            votes = game_session.get("votes", {})
-            
-            # Build resolution message
+            headline_votes = dict(game_session["votes"])
             headline_text = current_headline.get("text", "Unknown headline")
             headline_is_real = current_headline.get("is_real", True)
             explanation = current_headline.get("explanation", "No explanation available")
             source = current_headline.get("source", "Unknown source")
-            
-            # Determine the correct answer and result
             correct_answer = "TRUST" if headline_is_real else "FLAG"
             truth_status = "✅ REAL" if headline_is_real else "❌ FAKE"
-            
             resolution_text = f"📊 **HEADLINE RESOLUTION**\n\n"
             resolution_text += f"📰 **Headline:** {headline_text}\n\n"
-            resolution_text += f"🎯 **Result:** {truth_status}\n"
+            resolution_text += f"�� **Result:** {truth_status}\n"
             resolution_text += f"✅ **Correct Answer:** {correct_answer}\n\n"
             resolution_text += f"💡 **Explanation:**\n{explanation}\n\n"
             resolution_text += f"🔗 **Source:** {source}\n\n"
-            
-            # Show voting results with weighted counts
             resolution_text += "🗳️ **Voting Results:**\n"
-            
-            if votes:
+            if headline_votes:
                 trust_voters = []
                 flag_voters = []
                 weighted_trust_votes = 0
                 weighted_flag_votes = 0
-                
-                for voter_id, vote_data in votes.items():
-                    # Get username for the voter
+                for voter_id, vote_data in headline_votes.items():
                     player_data = game_session["players"].get(voter_id, {})
                     username = player_data.get("username", f"Player {voter_id}")
-                    
-                    # Get voter's role to determine vote weight
                     role_info = game_session["player_roles"].get(voter_id, {})
                     role = role_info.get("role")
                     vote_weight = role.get_vote_weight() if role and hasattr(role, 'get_vote_weight') else 1
-                    
                     if isinstance(vote_data, dict):
                         vote_type = vote_data.get("vote_type")
                         if vote_type == "trust":
-                            # Add vote weight indicator for Influencer
                             if vote_weight > 1:
                                 trust_voters.append(f"{username} (x{vote_weight})")
                             else:
                                 trust_voters.append(username)
                             weighted_trust_votes += vote_weight
                         elif vote_type == "flag":
-                            # Add vote weight indicator for Influencer
                             if vote_weight > 1:
                                 flag_voters.append(f"{username} (x{vote_weight})")
                             else:
                                 flag_voters.append(username)
                             weighted_flag_votes += vote_weight
-                
-                # Show who voted what with weighted totals
                 if trust_voters:
                     resolution_text += f"🟢 **TRUSTED** ({len(trust_voters)} voters, {weighted_trust_votes} votes): {', '.join(trust_voters)}\n"
                 else:
                     resolution_text += "🟢 **TRUSTED** (0 voters, 0 votes): No one\n"
-                    
                 if flag_voters:
                     resolution_text += f"🔴 **FLAGGED** ({len(flag_voters)} voters, {weighted_flag_votes} votes): {', '.join(flag_voters)}\n"
                 else:
                     resolution_text += "🔴 **FLAGGED** (0 voters, 0 votes): No one\n"
-                    
-                # Show majority result based on weighted votes
                 majority_result = "TRUST" if weighted_trust_votes > weighted_flag_votes else "FLAG"
                 resolution_text += f"\n⚖️ **Majority Decision:** {majority_result} (based on weighted votes)\n"
-                    
-                # Show who was correct
                 resolution_text += "\n🎯 **Correct Votes:**\n"
                 correct_voters = trust_voters if headline_is_real else flag_voters
                 incorrect_voters = flag_voters if headline_is_real else trust_voters
-                
                 if correct_voters:
                     resolution_text += f"✅ {', '.join(correct_voters)}\n"
                 else:
                     resolution_text += "✅ No one voted correctly\n"
-                    
                 if incorrect_voters:
                     resolution_text += f"❌ {', '.join(incorrect_voters)}\n"
             else:
                 resolution_text += "No votes were cast this round.\n"
-            
             await bot_context.bot.send_message(
                 chat_id=game_session["chat_id"],
                 text=resolution_text
             )
-            
-            # Only send snipe timing info if this is a snipe round (rounds 2 or 4)
-            current_round = game_session["round_number"]
-            if self._is_snipe_round(current_round):
-                await self._send_snipe_timing_info(game_session, bot_context)
-            
-            # Only send continue/end options after snipe rounds or after round 5
-            win_progress = game_session["win_progress"]
-            if self._is_snipe_round(current_round) or win_progress.get("rounds_completed", 0) >= 5 or game_session.get("game_over", False):
-                await self._send_continue_end_options(game_session, bot_context)
-        
+            # --- Send misinformation voting prompt immediately after resolution ---
+            alive_players = [
+                player_data for pid, player_data in game_session["players"].items()
+                if pid not in game_session["eliminated_players"]
+            ]
+            # If the game is not over, send a clear status message to the chat
+            if not game_session.get("game_over", False) and len(alive_players) > 1:
+                # Inform players that the game continues
+                continue_message = "⏩ No team has won yet. The game continues to the next round!"
+                await bot_context.bot.send_message(
+                    chat_id=game_session["chat_id"],
+                    text=continue_message
+                )
+                logger.info(f"Game continues message sent to chat {game_session['chat_id']}")
+                # No player voting phase in simplified flow
+            # After broadcasting the resolution and any follow-up messages,
+            # clear the votes so they do not carry over into the next round.
+            game_session["votes"] = {}
+            # Do NOT send snipe timing info or continue/end options here. Let phase handler do it.
         except Exception as e:
             logger.error(f"Failed to send headline resolution: {e}")
             import traceback
@@ -1379,9 +1420,10 @@ class TruthWarsManager:
         if self._is_snipe_round(current_round):
             # This is a snipe round - the snipe opportunity phase will follow
             snipe_info = (
-                f"🎯 **Next: Snipe Opportunity Phase!**\n"
-                f"⚡ Fact Checkers and Scammers will have 90 seconds to use their snipe abilities\n"
-                f"🎯 Target wisely - wrong targets result in self-shadow ban!\n\n"
+                f"🎯 **Round {current_round}: Snipe Opportunity!**\n\n"
+                f"⚡ **Fact Checkers** and **Scammers** can now use their snipe abilities!\n"
+                f"🎯 Target your suspected enemies to shadow ban them\n"
+                f"⚠️ **WARNING**: Wrong target = YOU get shadow banned!\n\n"
                 f"⏰ **90 seconds** to decide...\n\n"
             )
         else:
@@ -1419,29 +1461,22 @@ class TruthWarsManager:
         """Send continue/end game options after resolution."""
         try:
             from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-            
             current_round = game_session["round_number"]
+            completed_round = current_round  # Now round_number always reflects the round just completed
             game_id = game_session["game_id"]
-            
-            # Check if we've reached max rounds or a win condition
             win_progress = game_session["win_progress"]
             has_winner = (win_progress["fake_headlines_trusted"] >= 3 or 
                          win_progress["fake_headlines_flagged"] >= 3)
-            
             if has_winner or current_round >= 5:
-                # Game should end - don't show continue option
                 end_message = (
-                    f"🎯 **Round {current_round} Complete**\n\n"
+                    f"🎯 **Round {completed_round} Complete**\n\n"
                     f"The game will automatically end now due to win conditions or maximum rounds reached."
                 )
-                
                 await bot_context.bot.send_message(
                     chat_id=game_session["chat_id"],
                     text=end_message
                 )
                 return
-            
-            # Show continue/end options
             keyboard = [
                 [
                     InlineKeyboardButton("▶️ Continue Game", callback_data=f"continue_game_{game_id}"),
@@ -1449,25 +1484,21 @@ class TruthWarsManager:
                 ]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
-            
             continue_message = (
-                f"🎯 **Round {current_round} Complete**\n\n"
+                f"🎯 **Round {completed_round} Complete**\n\n"
                 f"📊 **Current Score:**\n"
                 f"• Fake headlines trusted: {win_progress['fake_headlines_trusted']}/3\n"
                 f"• Fake headlines flagged: {win_progress['fake_headlines_flagged']}/3\n"
-                f"• Rounds completed: {win_progress['rounds_completed']}/5\n\n"
+                f"• Rounds completed: {completed_round}/5\n\n"
                 f"🤔 **What's next?**\n"
                 f"Game Creator: Choose to continue or end the game."
             )
-            
             await bot_context.bot.send_message(
                 chat_id=game_session["chat_id"],
                 text=continue_message,
                 reply_markup=reply_markup
             )
-            
             logger.info(f"Sent continue/end options for game {game_id}")
-            
         except Exception as e:
             logger.error(f"Failed to send continue/end options: {e}")
     
@@ -1488,9 +1519,13 @@ class TruthWarsManager:
                 winner_emoji = "🎯"
                 winner_name = "**UNKNOWN**"
             
-            results_text = f"🎉 **GAME OVER - FINAL RESULTS**\n\n"
+            # Helper to escape underscores for Telegram Markdown
+            def _esc(text: str) -> str:
+                return text.replace("_", "\\_")
+
+            results_text = "🎉 **GAME OVER - FINAL RESULTS**\n\n"
             results_text += f"{winner_emoji} **WINNER:** {winner_name}\n"
-            results_text += f"📄 **Reason:** {win_reason}\n\n"
+            results_text += f"📄 **Reason:** {_esc(win_reason)}\n\n"
             
             # Add win progress summary
             results_text += self._get_win_progress_display(game_session) + "\n\n"
@@ -1498,13 +1533,13 @@ class TruthWarsManager:
             # Show all player roles
             results_text += "👥 **Role Reveals:**\n"
             for player_id, player_data in game_session["players"].items():
-                username = player_data.get("username", f"Player {player_id}")
+                username = _esc(player_data.get("username", f"Player {player_id}"))
                 role_info = game_session["player_roles"].get(player_id, {})
                 
                 # Get role name from role object
                 role = role_info.get("role")
                 role_name = role.name if role else "Unknown"
-                faction = role_info.get("faction", "Unknown")
+                faction = _esc(role_info.get("faction", "Unknown"))
                 
                 status = "💀 Eliminated" if player_id in game_session["eliminated_players"] else "✅ Survived"
                 current_rp = game_session["player_reputation"].get(player_id, 3)
@@ -1526,7 +1561,8 @@ class TruthWarsManager:
             
             await bot_context.bot.send_message(
                 chat_id=game_session["chat_id"],
-                text=results_text
+                text=results_text,
+                parse_mode='Markdown'
             )
             
         except Exception as e:
@@ -2233,46 +2269,30 @@ class TruthWarsManager:
     async def continue_game(self, game_id: str) -> Dict[str, Any]:
         """
         Continue the game to the next round.
-        
-        Args:
-            game_id: Game ID
-            
-        Returns:
-            Dict: Result of continue operation
         """
         try:
             if game_id not in self.active_games:
                 return {"success": False, "message": "Game not found"}
-            
             game_session = self.active_games[game_id]
-            
-            # Check if game can continue
             current_round = game_session["round_number"]
             win_progress = game_session["win_progress"]
-            
-            # Check win conditions
             has_winner = (win_progress["fake_headlines_trusted"] >= 3 or 
                          win_progress["fake_headlines_flagged"] >= 3)
-            
             if has_winner:
                 return {"success": False, "message": "Game already has a winner"}
-            
             if current_round >= 5:
                 return {"success": False, "message": "Maximum rounds reached"}
-            
-            # Force transition to news phase for next round
+            # --- Only allow continue if in await_continue phase ---
+            if game_session["state_machine"].current_phase != PhaseType.AWAIT_CONTINUE:
+                return {"success": False, "message": "Game is not waiting for continue. Please wait for the round to finish."}
+            game_session["round_number"] += 1
             game_state = self._get_game_state(game_session)
             game_session["state_machine"].force_transition(PhaseType.HEADLINE_REVEAL, game_state)
-            
-            # Start the next news phase
             await self._start_news_phase(game_session)
-            
             logger.info(f"Game {game_id} continued to round {game_session['round_number']}")
-            
             return {"success": True, "message": f"Game continued to round {game_session['round_number']}"}
-            
         except Exception as e:
-            logger.error(f"Failed to continue game {game_id}: {e}")
+            logger.error(f"Failed to continue game: {e}")
             return {"success": False, "message": "Failed to continue game"}
     
     async def end_game(self, game_id: str) -> Dict[str, Any]:
@@ -2381,42 +2401,59 @@ class TruthWarsManager:
         current_round = game_session["round_number"]
         chat_id = game_session["chat_id"]
         
-        # Build snipe opportunity message
+        # Build public snipe notice (only Fact Checker may act, anonymity preserved)
         snipe_message = (
-            f"🎯 **Round {current_round}: Snipe Opportunity!**\n\n"
-            f"⚡ **Fact Checkers** and **Scammers** can now use their snipe abilities!\n"
-            f"🎯 Target your suspected enemies to shadow ban them\n"
-            f"⚠️ **WARNING**: Wrong target = YOU get shadow banned!\n\n"
-            f"⏰ **90 seconds** to decide...\n\n"
+            f"🎯 **Round {current_round}: Fact-Checker's Secret Snipe**\n\n"
+            f"🧠 The **Fact Checker** now has **90 seconds** to secretly target one player.\n"
+            f"If the target is a 😈 *Scammer* they are instantly shadow-banned.\n"
+            f"If the guess is wrong, the Fact Checker is shadow-banned instead.\n"
         )
         
-        # Check which players can actually snipe
-        eligible_snipers = []
-        for player_id, role_info in game_session["player_roles"].items():
+        # Identify the Fact Checker with unused snipe
+        fact_checker_id = None
+        for pid, role_info in game_session["player_roles"].items():
             role = role_info.get("role")
-            if role and role.can_use_snipe():
-                player_data = game_session["players"].get(player_id, {})
-                username = player_data.get("username", f"Player {player_id}")
-                eligible_snipers.append(username)
-        
-        if eligible_snipers:
-            snipe_message += f"🎯 **Players with snipe ability available**: {', '.join(eligible_snipers)}\n\n"
+            if role and getattr(role, "role_type", None).value == "fact_checker" and role.can_use_snipe():
+                fact_checker_id = pid
+                break
+
+        if fact_checker_id is None:
+            snipe_message += "ℹ️ Fact Checker has already used their snipe."
         else:
-            snipe_message += f"ℹ️ **No players have unused snipe abilities this round**\n\n"
-            
-        snipe_message += (
-            f"📝 **Reminder**: \n"
-            f"• Snipes are only available on rounds 2 and 4\n"
-            f"• Each role can only snipe once per game\n"
-            f"• Shadow bans last for 1 round\n"
-            f"• Failed snipes result in self-shadow ban"
-        )
+            snipe_message += "🤫 Fact Checker, check your private chat to select a target!"
         
         try:
             await bot_context.bot.send_message(
                 chat_id=chat_id,
                 text=snipe_message
             )
+            # --- Send private prompt with inline buttons to the Fact Checker ---
+            if fact_checker_id:
+                try:
+                    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+                    keyboard = []
+                    for pid, pdata in game_session["players"].items():
+                        if pid == fact_checker_id or pid in game_session["eliminated_players"]:
+                            continue
+                        username = pdata.get("username", f"Player {pid}")
+                        keyboard.append([
+                            InlineKeyboardButton(username, callback_data=f"snipe_{pid}_{game_session['game_id']}")
+                        ])
+                    if keyboard:
+                        reply_markup = InlineKeyboardMarkup(keyboard)
+                        await bot_context.bot.send_message(
+                            chat_id=fact_checker_id,
+                            text="🎯 **Choose a player to snipe:** (one-time ability)",
+                            reply_markup=reply_markup
+                        )
+                    else:
+                        # No valid targets (e.g., single-player test games). Still notify the Fact Checker.
+                        await bot_context.bot.send_message(
+                            chat_id=fact_checker_id,
+                            text="ℹ️ No eligible targets to snipe this round."
+                        )
+                except Exception as dm_err:
+                    logger.error(f"Failed to send DM snipe prompt: {dm_err}")
             logger.info(f"Sent snipe opportunity message for round {current_round}")
         except Exception as e:
             logger.error(f"Failed to send snipe opportunity message: {e}")
@@ -2480,8 +2517,15 @@ class TruthWarsManager:
         if game_id not in self.active_games:
             return {"success": False, "message": "Game not found"}
         game_session = self.active_games[game_id]
+        # Only allow voting during discussion or voting phases
+        current_phase = game_session["state_machine"].get_current_phase_type().value
+        if current_phase not in ["discussion", "voting"]:
+            return {"success": False, "message": "You can only vote during the discussion or voting phases."}
         if not self._can_player_vote(game_session, user_id):
             return {"success": False, "message": "Player cannot vote"}
+        # Prevent duplicate votes: only first vote counts
+        if user_id in game_session["votes"]:
+            return {"success": False, "message": "You have already voted this round. Only your first vote counts."}
         # Register the vote
         game_session["votes"][user_id] = {
             "vote_type": vote_type,
@@ -2514,3 +2558,59 @@ class TruthWarsManager:
             return
         game_session = self.active_games[game_id]
         await self._check_phase_transition(game_session)
+
+    async def _send_player_voting_summary(self, game_session: Dict, bot_context) -> None:
+        """Send a summary of player-voting results to the chat."""
+        player_votes = game_session.get("player_votes", {})
+        if not player_votes:
+            await bot_context.bot.send_message(
+                chat_id=game_session["chat_id"],
+                text="No player-voting results to show."
+            )
+            return
+        lines = ["🗳️ **Player Voting Results:**"]
+        for voter_id, target_id in player_votes.items():
+            voter_name = game_session["players"].get(voter_id, {}).get("username", str(voter_id))
+            target_name = game_session["players"].get(target_id, {}).get("username", str(target_id))
+            lines.append(f"{voter_name} voted for {target_name}")
+        await bot_context.bot.send_message(
+            chat_id=game_session["chat_id"],
+            text="\n".join(lines)
+        )
+        # DO NOT clear player_votes here. It will be cleared after phase transition.
+
+    async def _prepare_headline_set(self, game_session: Dict) -> None:
+        """Prepare two headline pools (Set A and Set B) and choose one at random as per v3 rules.
+
+        Set A = 3 real, 2 fake
+        Set B = 2 real, 3 fake
+        """
+        try:
+            # Fetch required headlines from DB
+            async with DatabaseSession() as session:
+                from sqlalchemy import select
+                real_q = await session.execute(
+                    select(Headline).where(Headline.is_real == True).order_by(func.random()).limit(3)
+                )
+                fake_q = await session.execute(
+                    select(Headline).where(Headline.is_real == False).order_by(func.random()).limit(3)
+                )
+                real_headlines = [row[0] for row in real_q.fetchall()]
+                fake_headlines = [row[0] for row in fake_q.fetchall()]
+            if len(real_headlines) < 3 or len(fake_headlines) < 3:
+                logger.warning("Not enough headlines in DB to build balanced sets; defaulting to random queue")
+                return
+
+            # Build sets
+            set_a = real_headlines[:3] + fake_headlines[:2]
+            set_b = real_headlines[:2] + fake_headlines[:3]
+
+            import random as _r
+            chosen_set = _r.choice([set_a, set_b])
+            _r.shuffle(chosen_set)
+
+            # Store in session as queue
+            game_session["headline_queue"] = chosen_set
+            logger.info(f"Prepared headline set with {len(chosen_set)} items for game {game_session['game_id']}")
+        except Exception as e:
+            logger.error(f"Failed to prepare headline set: {e}")

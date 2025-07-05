@@ -100,6 +100,9 @@ class FactChecker(Role):
         super().__init__(RoleType.FACT_CHECKER, "truth_seekers")
         self.snipe_ability = True
         self.no_info_round = None  # Will be set randomly (1-5)
+        # v3: allow up to 3 peeks per game, not in consecutive rounds
+        self.peeks_left: int = 3
+        self.last_peek_round: int = 0  # Round number when the last peek was used (0 = never)
         
     @property
     def name(self) -> str:
@@ -164,6 +167,30 @@ class FactChecker(Role):
                 "sniper_id": sniper_id
             }
 
+    # === Truth Wars v3 additions ===
+    def can_peek_headline(self, current_round: int) -> bool:
+        """Determine if the Fact Checker can peek at the headline truth this round.
+
+        - Must have peeks remaining.
+        - Cannot peek in two consecutive rounds (ensure a gap of at least 1 round).
+        """
+        if self.peeks_left <= 0:
+            return False
+        # If never peeked before, allowed
+        if self.last_peek_round == 0:
+            return True
+        # Enforce non-consecutive rule
+        return (current_round - self.last_peek_round) > 1
+
+    def record_peek(self, current_round: int) -> None:
+        """Call when the Fact Checker performs a peek.
+
+        Decrements remaining peeks and records the round number.
+        """
+        if self.peeks_left > 0:
+            self.peeks_left -= 1
+            self.last_peek_round = current_round
+
 
 class Scammer(Role):
     """
@@ -177,7 +204,8 @@ class Scammer(Role):
     
     def __init__(self):
         super().__init__(RoleType.SCAMMER, "misinformers")
-        self.snipe_ability = True
+        # v3: Scammer no longer has snipe ability
+        self.snipe_ability = False
         
     @property
     def name(self) -> str:

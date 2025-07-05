@@ -334,6 +334,10 @@ class TruthWarsGame(Base):
     snipes_used_this_round = Column(Integer, default=0, doc="Number of snipes used this round")
     next_snipe_round = Column(Integer, default=2, doc="Next round when snipes will be available")
     
+    # === v3 team score tracking ===
+    truth_score = Column(Integer, default=0, doc="Points for Truth Team (first to 3 wins)")
+    scam_score = Column(Integer, default=0, doc="Points for Scammer Team (first to 3 wins)")
+    
     # Content and difficulty progression
     current_headline_id = Column(String(36), ForeignKey("headlines.id"), nullable=True, doc="Active headline ID")
     difficulty_progression = Column(JSON, default=lambda: ["easy", "medium", "medium", "hard", "hard"], doc="Difficulty for each round")

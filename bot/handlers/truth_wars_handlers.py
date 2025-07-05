@@ -368,6 +368,13 @@ async def ability_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         logger.warning("ability_command called without a message object")
         return
     
+    # --- T12: Enforce private chat usage ---
+    if update.effective_chat.type != 'private':
+        await update.message.reply_text(
+            "❌ Please use /ability in a private chat with me (open DM), not in the group chat."
+        )
+        return
+    
     game_id = context.chat_data.get('current_game_id')
     if not game_id:
         await update.message.reply_text(
@@ -572,14 +579,18 @@ async def handle_truth_wars_callback(update: Update, context: ContextTypes.DEFAU
             await handle_trust_vote(update, context)
         elif callback_data.startswith("vote_flag_"):
             await handle_flag_vote(update, context)
+        elif callback_data.startswith("vote_player_"):
+            await handle_vote_player_callback(update, context)
         elif callback_data.startswith("continue_game_"):
             await handle_continue_game_callback(update, context)
         elif callback_data.startswith("end_game_"):
             await handle_end_game_callback(update, context)
+        elif callback_data.startswith("snipe_"):
+            await handle_snipe_callback(update, context)
         else:
             logger.warning(f"Unhandled callback data: {callback_data}")
             await query.answer("❌ Unknown action", show_alert=True)
-            
+        
     except Exception as e:
         logger.error(f"Error handling Truth Wars callback: {e}")
         import traceback
@@ -594,12 +605,17 @@ async def handle_truth_wars_callback(update: Update, context: ContextTypes.DEFAU
 async def handle_trust_vote(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle Trust vote on a headline."""
     query = update.callback_query
-    game_id = context.chat_data.get('current_game_id')
     user_id = update.effective_user.id
-    
+    # Ensure current_game_id is set
+    game_id = context.chat_data.get('current_game_id')
     if not game_id:
-        await query.answer("❌ No active game found", show_alert=True)
-        return
+        # Try to extract from callback_data
+        try:
+            game_id = query.data.split('_')[3]
+            context.chat_data['current_game_id'] = game_id
+        except Exception:
+            await query.answer("❌ No active game found", show_alert=True)
+            return
     
     try:
         # Set bot context for the manager
@@ -624,7 +640,15 @@ async def handle_trust_vote(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             # Now check and advance phase (may send round results, etc.)
             await truth_wars_manager.check_and_advance_phase(game_id)
         else:
-            await query.answer(f"❌ {result.get('message', 'Vote failed')}", show_alert=True)
+            # Improved: Also send a message to the group chat explaining why the vote was not counted
+            error_message = result.get('message', 'Vote failed')
+            await query.answer(f"❌ {error_message}", show_alert=True)
+            # Only send to group if not a generic failure
+            if error_message:
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=f"❌ Vote not counted: {error_message}"
+                )
         
     except Exception as e:
         logger.error(f"Failed to handle trust vote: {e}")
@@ -634,12 +658,17 @@ async def handle_trust_vote(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 async def handle_flag_vote(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle Flag vote on a headline."""
     query = update.callback_query
-    game_id = context.chat_data.get('current_game_id')
     user_id = update.effective_user.id
-    
+    # Ensure current_game_id is set
+    game_id = context.chat_data.get('current_game_id')
     if not game_id:
-        await query.answer("❌ No active game found", show_alert=True)
-        return
+        # Try to extract from callback_data
+        try:
+            game_id = query.data.split('_')[3]
+            context.chat_data['current_game_id'] = game_id
+        except Exception:
+            await query.answer("❌ No active game found", show_alert=True)
+            return
     
     try:
         # Set bot context for the manager
@@ -664,7 +693,14 @@ async def handle_flag_vote(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             # Now check and advance phase (may send round results, etc.)
             await truth_wars_manager.check_and_advance_phase(game_id)
         else:
-            await query.answer(f"❌ {result.get('message', 'Vote failed')}", show_alert=True)
+            # Improved: Also send a message to the group chat explaining why the vote was not counted
+            error_message = result.get('message', 'Vote failed')
+            await query.answer(f"❌ {error_message}", show_alert=True)
+            if error_message:
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=f"❌ Vote not counted: {error_message}"
+                )
         
     except Exception as e:
         logger.error(f"Failed to handle flag vote: {e}")
@@ -908,4 +944,85 @@ async def ensure_user_exists(telegram_user) -> None:
                 logger.debug(f"User exists - user_id: {telegram_user.id}, username: {telegram_user.username}")
                 
     except Exception as e:
-        logger.error(f"Failed to ensure user exists - user_id: {telegram_user.id}, error: {str(e)}") 
+        logger.error(f"Failed to ensure user exists - user_id: {telegram_user.id}, error: {str(e)}")
+
+
+async def handle_vote_player_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle voting for who is spreading misinformation (misinformation vote)."""
+    query = update.callback_query
+    user_id = update.effective_user.id
+    callback_data = query.data
+
+    # Extract the target player ID from the callback data
+    try:
+        target_id = int(callback_data.split('_')[2])
+    except (IndexError, ValueError):
+        await query.answer("❌ Invalid vote", show_alert=True)
+        return
+
+    # Get the current game ID
+    game_id = context.chat_data.get('current_game_id')
+    if not game_id:
+        await query.answer("❌ No active game found", show_alert=True)
+        return
+
+    # Set bot context for the manager
+    truth_wars_manager.set_bot_context(context)
+
+    # Register the vote using the new 'vote_player' action
+    result = await truth_wars_manager.process_player_action(
+        game_id, user_id, "vote_player", {"target_id": target_id}
+    )
+
+    if result.get("success"):
+        await query.answer("✅ Vote registered", show_alert=False)
+        # Optionally, send a confirmation message to the chat
+        player_name = update.effective_user.first_name or "Player"
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"🗳️ {player_name} voted for player {target_id} as spreading misinformation."
+        )
+        # Optionally, check and advance phase if needed
+        await truth_wars_manager.check_and_advance_phase(game_id)
+    else:
+        # Improved error feedback for wrong phase or duplicate vote
+        error_message = result.get('message', 'Vote failed')
+        await query.answer(f"❌ {error_message}", show_alert=True)
+        if error_message:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=f"❌ Vote not counted: {error_message}"
+            )
+
+
+# === T11: Handle snipe callback from Fact Checker ===
+async def handle_snipe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Process inline button callback when Fact Checker selects a snipe target."""
+    query = update.callback_query
+    user_id = update.effective_user.id
+    data = query.data  # Expected format: snipe_<targetId>_<gameId>
+    try:
+        _, target_id_str, game_id = data.split('_', 2)
+        target_id = int(target_id_str)
+    except ValueError:
+        await query.answer("Invalid snipe data", show_alert=True)
+        return
+
+    # Ensure current_game_id context for convenience
+    context.chat_data['current_game_id'] = game_id
+
+    try:
+        truth_wars_manager.set_bot_context(context)
+        result = await truth_wars_manager.process_player_action(
+            game_id,
+            user_id,
+            "use_ability",
+            {"ability": "snipe", "target": target_id}
+        )
+        if result.get("success"):
+            await query.answer("🎯 Snipe executed!", show_alert=False)
+        else:
+            await query.answer(f"❌ {result.get('message', 'Snipe failed')}", show_alert=True)
+    except Exception as e:
+        logger.error(f"Error processing snipe callback: {e}")
+        await query.answer("❌ Snipe failed", show_alert=True) 

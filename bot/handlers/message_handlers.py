@@ -25,6 +25,8 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         update: Telegram update object
         context: Bot context
     """
+    if not update.message or not update.message.text:
+        return
     user = update.effective_user
     chat_id = update.effective_chat.id
     message_text = update.message.text
@@ -112,39 +114,12 @@ Each round you analyze a **news headline**:
             parse_mode='Markdown'
         )
         return
-    
-    # Default response for other messages
-    response_text = """
-💬 I received your message, but I'm not sure what to do with it yet!
-
-🎮 **To get started:**
-• Use the menu buttons below
-• Use `/truthwars` in a group to start a game
-• Use `/help` for more information
-• Use `/stats` to see your statistics
-
-Once games are active, I'll be able to process your moves and responses during gameplay.
-    """
-    
-    try:
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=response_text,
-            parse_mode='Markdown'
-        )
-        logger.info(
-            "Text message processed", 
-            user_id=user.id, 
-            chat_id=chat_id,
-            message_preview=message_text[:50] + "..." if len(message_text) > 50 else message_text
-        )
-        
-    except Exception as e:
-        logger.error(f"Error handling text message - user_id={user.id}, error={str(e)}")
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text="Sorry, something went wrong processing your message."
-        )
+    # Only respond to commands (messages starting with '/')
+    if message_text.strip().startswith("/"):
+        # Let the command handler process it (do nothing here)
+        return
+    # For all other messages, do nothing (ignore)
+    return
 
 
 async def _handle_shadow_ban_enforcement(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:

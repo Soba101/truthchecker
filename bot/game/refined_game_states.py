@@ -22,7 +22,9 @@ class PhaseType(Enum):
     DISCUSSION = "discussion"
     VOTING = "voting"
     ROUND_RESULTS = "round_results"
+    PLAYER_VOTING = "player_voting"  # New phase for player accusation voting
     SNIPE_OPPORTUNITY = "snipe_opportunity"
+    AWAIT_CONTINUE = "await_continue"
     GAME_END = "game_end"
 
 
@@ -47,18 +49,20 @@ class RefinedGameStateMachine:
         self.phase_durations = {
             PhaseType.LOBBY: 180,  # 3 minutes to join (reduced from 5)
             PhaseType.ROLE_ASSIGNMENT: 45,  # 45 seconds to read roles (reduced from 60)
-            PhaseType.HEADLINE_REVEAL: 20,  # 20 seconds to read headline (reduced from 30)
+            PhaseType.HEADLINE_REVEAL: 1,  # reduced to 1 second to immediately enter discussion phase
             PhaseType.DISCUSSION: 120,  # 2 minutes for discussion (reduced from 3)
             PhaseType.VOTING: 45,  # 45 seconds for Trust/Flag voting (reduced from 60)
             PhaseType.ROUND_RESULTS: 30,  # 30 seconds to see results (reduced from 45)
             PhaseType.SNIPE_OPPORTUNITY: 60,  # 1 minute for snipe attempts (reduced from 90)
+            PhaseType.AWAIT_CONTINUE: 30,  # 30 seconds to continue (new phase for post-results pause)
             PhaseType.GAME_END: 60  # 1 minute to see final results (reduced from 120)
         }
         
         # Track game state for win conditions
         self.fake_headlines_trusted = 0
         self.fake_headlines_flagged = 0
-        self.snipe_rounds = [2, 4]  # Rounds where snipe is available
+        # v3: Fact Checker can snipe once per game in rounds 1-4
+        self.snipe_rounds = [1, 2, 3, 4]
         
     def start_game(self) -> Dict[str, Any]:
         """
@@ -125,6 +129,10 @@ class RefinedGameStateMachine:
             # Transition when snipe used or time up
             return time_elapsed >= phase_time_limit
             
+        elif self.current_phase == PhaseType.AWAIT_CONTINUE:
+            # Transition when awaiting continue
+            return time_elapsed >= phase_time_limit
+            
         elif self.current_phase == PhaseType.GAME_END:
             # Game stays in end state
             return False
@@ -163,21 +171,38 @@ class RefinedGameStateMachine:
             self.current_phase = PhaseType.ROUND_RESULTS
             
         elif self.current_phase == PhaseType.ROUND_RESULTS:
-            # Check if this is a snipe round
-            if self.round_number in self.snipe_rounds:
+            # Simplified flow: resolve results then either snipe (rounds 2 & 4) or move to next headline
+            if self._should_end_game(game_state):
+                self.current_phase = PhaseType.GAME_END
+            elif self.round_number in self.snipe_rounds:
                 self.current_phase = PhaseType.SNIPE_OPPORTUNITY
             else:
-                # Move to next round or end game
-                if self._should_end_game(game_state):
-                    self.current_phase = PhaseType.GAME_END
-                elif self.round_number < self.max_rounds:
+                if self.round_number < self.max_rounds:
                     self.round_number += 1
                     self.current_phase = PhaseType.HEADLINE_REVEAL
                 else:
                     self.current_phase = PhaseType.GAME_END
-                    
+            # Return transition result immediately
+            return {
+                "success": True,
+                "from_phase": previous_phase.value,
+                "to_phase": self.current_phase.value,
+                "round_number": self.round_number,
+                "time_limit": self.phase_durations.get(self.current_phase, 300)
+            }
+        
         elif self.current_phase == PhaseType.SNIPE_OPPORTUNITY:
             # After snipe phase, check if game should end
+            if self._should_end_game(game_state):
+                self.current_phase = PhaseType.GAME_END
+            elif self.round_number < self.max_rounds:
+                self.round_number += 1
+                self.current_phase = PhaseType.HEADLINE_REVEAL
+            else:
+                self.current_phase = PhaseType.GAME_END
+        
+        elif self.current_phase == PhaseType.AWAIT_CONTINUE:
+            # After results, check if game should end
             if self._should_end_game(game_state):
                 self.current_phase = PhaseType.GAME_END
             elif self.round_number < self.max_rounds:
@@ -462,6 +487,8 @@ class RefinedGameStateMachine:
             PhaseType.ROUND_RESULTS: f"📊 **Round {self.round_number}: Results**\nSee how everyone voted and learn the truth about the headline.",
             
             PhaseType.SNIPE_OPPORTUNITY: f"🎯 **Round {self.round_number}: Snipe Opportunity**\nSpecial roles can use their snipe abilities to shadow ban suspected enemies!",
+            
+            PhaseType.AWAIT_CONTINUE: "⏸️ **Awaiting Continue**\nPress continue to proceed to the next round or end the game.",
             
             PhaseType.GAME_END: "🏁 **Game Over**\nSee final results and learn who was on which team!"
         }

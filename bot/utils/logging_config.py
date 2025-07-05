@@ -31,7 +31,7 @@ def setup_logging() -> None:
     
     # Set specific logger levels
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("telegram").setLevel(logging.INFO)
+    logging.getLogger("telegram").setLevel(logging.WARNING)
     
     # Create application logger
     logger = logging.getLogger(__name__)
@@ -62,7 +62,7 @@ def log_user_action(user_id: int, action: str, **kwargs) -> None:
     """
     logger = get_logger("user_actions")
     extra_info = " ".join([f"{k}={v}" for k, v in kwargs.items()])
-    logger.info(f"User action: user_id={user_id} action={action} {extra_info}")
+    logger.debug(f"User action: user_id={user_id} action={action} {extra_info}")
 
 
 def log_game_event(game_id: str, event_type: str, **kwargs) -> None:
@@ -76,4 +76,4 @@ def log_game_event(game_id: str, event_type: str, **kwargs) -> None:
     """
     logger = get_logger("game_events")
     extra_info = " ".join([f"{k}={v}" for k, v in kwargs.items()])
-    logger.info(f"Game event: game_id={game_id} event_type={event_type} {extra_info}") 
+    logger.debug(f"Game event: game_id={game_id} event_type={event_type} {extra_info}") 
