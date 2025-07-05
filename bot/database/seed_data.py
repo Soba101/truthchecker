@@ -321,11 +321,13 @@ async def seed_all_data() -> None:
     logger.info("Starting database seeding for refined Truth Wars system...")
     
     try:
-        # Seed headlines
+        # Seed static headlines only
         await seed_headlines()
-        
+
         logger.info("Database seeding completed successfully!")
-        logger.info(f"System ready with {len(INITIAL_HEADLINES)} headlines and {len(MEDIA_LITERACY_TIPS)} educational tips")
+        logger.info(
+            f"System ready with {len(INITIAL_HEADLINES)} headlines and {len(MEDIA_LITERACY_TIPS)} educational tips"
+        )
         
     except Exception as e:
         logger.error(f"Database seeding failed: {e}")

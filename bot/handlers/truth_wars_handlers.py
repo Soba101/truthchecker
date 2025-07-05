@@ -10,6 +10,8 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackQueryHandler
 import uuid
 import asyncio
+import telegram
+from telegram.helpers import escape_markdown
 
 from ..game.truth_wars_manager import TruthWarsManager
 from ..utils.logging_config import get_logger
@@ -339,11 +341,13 @@ async def vote_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         
         if result.get("success"):
             target_name = update.message.reply_to_message.from_user.first_name
-            await update.message.reply_text(
-                f"🗳️ **Vote cast!**\n\n"
-                f"You voted to eliminate **{target_name}**.\n\n"
-                "You can change your vote anytime during the voting phase.",
-                parse_mode='Markdown'
+            player_name_raw = update.effective_user.first_name or "Player"
+            player_name = escape_markdown(player_name_raw, version=2)
+            message_text = f"🗳️ {player_name} voted for player {target_id} as spreading misinformation."
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=message_text,
+                parse_mode=telegram.constants.ParseMode.MARKDOWN_V2
             )
         else:
             await update.message.reply_text(
@@ -977,10 +981,13 @@ async def handle_vote_player_callback(update: Update, context: ContextTypes.DEFA
     if result.get("success"):
         await query.answer("✅ Vote registered", show_alert=False)
         # Optionally, send a confirmation message to the chat
-        player_name = update.effective_user.first_name or "Player"
+        player_name_raw = update.effective_user.first_name or "Player"
+        player_name = escape_markdown(player_name_raw, version=2)
+        message_text = f"🗳️ {player_name} voted for player {target_id} as spreading misinformation."
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=f"🗳️ {player_name} voted for player {target_id} as spreading misinformation."
+            text=message_text,
+            parse_mode=telegram.constants.ParseMode.MARKDOWN_V2
         )
         # Optionally, check and advance phase if needed
         await truth_wars_manager.check_and_advance_phase(game_id)

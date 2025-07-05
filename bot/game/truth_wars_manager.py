@@ -692,7 +692,7 @@ class TruthWarsManager:
                 is_correct
             )
         # Always check phase transition after a vote
-        logger.info("Calling _check_phase_transition after vote.")
+        logger.debug("Calling _check_phase_transition after vote.")
         await self._check_phase_transition(game_session)
     
     async def _handle_ability_use(self, game_session: Dict, user_id: int, ability_data: Any) -> None:
@@ -757,9 +757,9 @@ class TruthWarsManager:
             vote_count = len(game_session.get("player_votes", {}))
         else:
             vote_count = len(game_session.get("votes", {}))
-        logger.info(f"_check_phase_transition: phase={current_phase}, votes={vote_count}, all_eligible_voted={game_state.get('all_eligible_voted')}, time_remaining={game_session['state_machine'].get_time_remaining()}")
+        logger.debug(f"_check_phase_transition: phase={current_phase}, votes={vote_count}, all_eligible_voted={game_state.get('all_eligible_voted')}, time_remaining={game_session['state_machine'].get_time_remaining()}")
         if game_session["state_machine"].can_transition(game_state):
-            logger.info("Phase can transition. Calling transition_phase.")
+            logger.debug("Phase can transition. Calling transition_phase.")
             transition_result = game_session["state_machine"].transition_phase(game_state)
             if transition_result:
                 # Handle phase-specific transitions first
@@ -775,7 +775,7 @@ class TruthWarsManager:
                 # CRITICAL: Send phase transition messages to chat
                 await self._handle_phase_transition(game_session, transition_result)
         else:
-            logger.info("Phase cannot transition yet.")
+            logger.debug("Phase cannot transition yet.")
     
     async def _start_news_phase(self, game_session: Dict) -> None:
         """Start a new news phase with a fresh headline."""
@@ -1274,7 +1274,13 @@ class TruthWarsManager:
             elif new_phase == "game_end":
                 await self._send_game_end_results(game_session, bot_context)
             # --- CRITICAL: Handle PLAYER_VOTING phase ---
-            # Player voting phase removed from flow
+            elif new_phase == "player_voting":
+                # Clear any previous player votes and prompt group for shadow-ban voting
+                game_session["player_votes"] = {}
+                await self._send_player_voting_interface(game_session, bot_context)
+            # After handling the new phase specific operations, process results from the previous PLAYER_VOTING phase if applicable
+            if transition_result.get("from_phase") == "player_voting":
+                await self._process_player_voting_results(game_session, bot_context)
         except Exception as e:
             logger.error(f"Failed to handle phase transition: {e}")
             import traceback
@@ -2614,3 +2620,38 @@ class TruthWarsManager:
             logger.info(f"Prepared headline set with {len(chosen_set)} items for game {game_session['game_id']}")
         except Exception as e:
             logger.error(f"Failed to prepare headline set: {e}")
+
+    async def _process_player_voting_results(self, game_session: Dict, bot_context) -> None:
+        """Tally player-voting results, apply shadow ban, and announce outcome."""
+        try:
+            player_votes = game_session.get("player_votes", {})
+            if not player_votes:
+                return  # nothing to process
+            # Build tally of votes per target
+            tally: Dict[int, int] = {}
+            for target_id in player_votes.values():
+                tally[target_id] = tally.get(target_id, 0) + 1
+            max_votes = max(tally.values())
+            top_targets = [pid for pid, cnt in tally.items() if cnt == max_votes]
+            # Send summary first
+            await self._send_player_voting_summary(game_session, bot_context)
+            # Determine outcome
+            if len(top_targets) == 1:
+                target_id = top_targets[0]
+                username = game_session["players"].get(target_id, {}).get("username", str(target_id))
+                await self._apply_shadow_ban(game_session, target_id, rounds=99)
+                await bot_context.bot.send_message(
+                    chat_id=game_session["chat_id"],
+                    text=f"🚫 **{username} has been shadow banned by majority vote!**"
+                )
+                logger.info(f"Player {target_id} shadow banned by group vote")
+            else:
+                await bot_context.bot.send_message(
+                    chat_id=game_session["chat_id"],
+                    text="⚖️ Vote was tied – no one is shadow banned this round."
+                )
+                logger.info("Player vote tie – no shadow ban applied")
+            # Clear votes after processing
+            game_session["player_votes"] = {}
+        except Exception as e:
+            logger.error(f"Failed to process player voting results: {e}")

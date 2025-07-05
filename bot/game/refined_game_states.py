@@ -52,8 +52,9 @@ class RefinedGameStateMachine:
             PhaseType.HEADLINE_REVEAL: 1,  # reduced to 1 second to immediately enter discussion phase
             PhaseType.DISCUSSION: 120,  # 2 minutes for discussion (reduced from 3)
             PhaseType.VOTING: 45,  # 45 seconds for Trust/Flag voting (reduced from 60)
-            PhaseType.ROUND_RESULTS: 30,  # 30 seconds to see results (reduced from 45)
+            PhaseType.ROUND_RESULTS: 15,  # 15 seconds to see results (reduced from 45)
             PhaseType.SNIPE_OPPORTUNITY: 60,  # 1 minute for snipe attempts (reduced from 90)
+            PhaseType.PLAYER_VOTING: 45,  # 45 seconds for shadow ban voting
             PhaseType.AWAIT_CONTINUE: 30,  # 30 seconds to continue (new phase for post-results pause)
             PhaseType.GAME_END: 60  # 1 minute to see final results (reduced from 120)
         }
@@ -120,6 +121,10 @@ class RefinedGameStateMachine:
             # Transition when all eligible players voted or time up
             return (game_state.get("all_eligible_voted", False) or 
                    time_elapsed >= phase_time_limit)
+        elif self.current_phase == PhaseType.PLAYER_VOTING:
+            # Transition when all eligible players have voted or time is up
+            return (game_state.get("all_eligible_voted", False) or
+                    time_elapsed >= phase_time_limit)
                    
         elif self.current_phase == PhaseType.ROUND_RESULTS:
             # Always transition after showing results
@@ -192,7 +197,14 @@ class RefinedGameStateMachine:
             }
         
         elif self.current_phase == PhaseType.SNIPE_OPPORTUNITY:
-            # After snipe phase, check if game should end
+            # After snipe phase, proceed to group shadow-ban voting unless game ends
+            if self._should_end_game(game_state):
+                self.current_phase = PhaseType.GAME_END
+            else:
+                self.current_phase = PhaseType.PLAYER_VOTING
+        
+        elif self.current_phase == PhaseType.PLAYER_VOTING:
+            # After player-voting phase, either continue with next round or end
             if self._should_end_game(game_state):
                 self.current_phase = PhaseType.GAME_END
             elif self.round_number < self.max_rounds:
@@ -296,6 +308,10 @@ class RefinedGameStateMachine:
             elif action == "vote_headline":
                 return self._handle_headline_vote(player_id, data, game_state)
         
+        elif self.current_phase == PhaseType.PLAYER_VOTING:
+            if action == "vote_player":
+                return self._handle_player_vote(player_id, data, game_state)
+        
         return {"success": False, "message": f"Action '{action}' not available in {self.current_phase.value} phase"}
     
     def _handle_headline_vote(self, player_id: int, vote_data: Dict, game_state: Dict) -> Dict[str, Any]:
@@ -358,6 +374,25 @@ class RefinedGameStateMachine:
             "success": True,
             "message": "Message sent",
             "content": message,
+            "player_id": player_id
+        }
+    
+    def _handle_player_vote(self, player_id: int, vote_data: Dict, game_state: Dict) -> Dict[str, Any]:
+        """Handle vote for shadow-ban during PLAYER_VOTING phase."""
+        target_id = vote_data.get("target_id")
+        if not target_id:
+            return {"success": False, "message": "Must specify a player to vote"}
+        # Eligibility checks (similar to headline vote)
+        if player_id in game_state.get("eliminated_players", []):
+            return {"success": False, "message": "Eliminated players cannot vote"}
+        if game_state.get("player_reputation", {}).get(player_id, 3) <= 0:
+            return {"success": False, "message": "Ghost Viewers (0 RP) cannot vote"}
+        if game_state.get("shadow_banned_players", {}).get(player_id, False):
+            return {"success": False, "message": "Shadow banned players cannot vote"}
+        return {
+            "success": True,
+            "message": f"Vote recorded for target {target_id}",
+            "target_id": target_id,
             "player_id": player_id
         }
     
@@ -487,6 +522,8 @@ class RefinedGameStateMachine:
             PhaseType.ROUND_RESULTS: f"📊 **Round {self.round_number}: Results**\nSee how everyone voted and learn the truth about the headline.",
             
             PhaseType.SNIPE_OPPORTUNITY: f"🎯 **Round {self.round_number}: Snipe Opportunity**\nSpecial roles can use their snipe abilities to shadow ban suspected enemies!",
+            
+            PhaseType.PLAYER_VOTING: f"🗳️ **Round {self.round_number}: Player Voting**\nVote to shadow ban suspected enemies!",
             
             PhaseType.AWAIT_CONTINUE: "⏸️ **Awaiting Continue**\nPress continue to proceed to the next round or end the game.",
             
