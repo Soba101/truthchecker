@@ -13,6 +13,7 @@ from sqlalchemy import select
 from .database import DatabaseSession
 from .models import Headline, User
 from ..utils.logging_config import get_logger
+from .additional_headlines import ADDITIONAL_HEADLINES
 
 logger = get_logger(__name__)
 
@@ -190,6 +191,9 @@ INITIAL_HEADLINES = [
         "verification_sources": ["entertainment news outlets", "celebrity social media", "verified reporting"]
     }
 ]
+
+# Extend initial headlines with additional medium and hard difficulty items
+INITIAL_HEADLINES += ADDITIONAL_HEADLINES
 
 # Educational tips that Drunk players can share
 MEDIA_LITERACY_TIPS = [
