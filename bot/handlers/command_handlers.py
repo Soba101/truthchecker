@@ -18,6 +18,11 @@ from .truth_wars_handlers import (
 # Logger setup
 logger = get_logger(__name__)
 
+# Database imports for stats & leaderboard
+from ..database.database import DatabaseSession
+from ..database.models import User as UserModel
+from sqlalchemy import select, desc, func
+
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
@@ -270,11 +275,6 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     log_user_action(user.id, "stats_command", username=user.username)
     
     try:
-        # Import database dependencies
-        from ..database.database import DatabaseSession
-        from ..database.models import User as UserModel
-        from sqlalchemy import select
-        
         # Query user stats from database
         async with DatabaseSession() as session:
             result = await session.execute(
@@ -400,45 +400,84 @@ async def leaderboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     # Log user action
     log_user_action(user.id, "leaderboard_command", username=user.username)
     
-    # Placeholder leaderboard (will be replaced with real database queries)
-    leaderboard_text = """
-🏆 **Truth Wars Leaderboard**
-
-**🕵️ Top Misinformation Detectives:**
-🥇 No players yet
-🥈 No players yet  
-🥉 No players yet
-
-**🧠 Media Literacy Champions:**
-📰 **Best Fact-Checkers:** None yet
-🔍 **Most Accurate:** None yet
-🎯 **Longest Streak:** None yet
-
-**📊 Recent Activity:**
-• No games played yet
-
-**📍 Your Rank:** Not ranked yet
-
-**🎮 Categories:**
-• 🎭 **Role Mastery** - Best performance by role
-• 🏅 **Win Rate** - Most successful players
-• 📈 **Learning Progress** - Media literacy improvement
-
-💡 **Ready to join the ranks?**
-Use `/truthwars` in a group chat to start your detective career!
-    """
-    
     try:
+        async with DatabaseSession() as session:
+            # Top players by total wins
+            result = await session.execute(
+                select(UserModel).order_by(UserModel.total_wins.desc(), UserModel.win_rate.desc()).limit(10)
+            )
+            top_players = result.scalars().all()
+
+            # Retrieve calling user's record for rank calculation
+            user_record = await session.get(UserModel, user.id)
+
+            if not top_players:
+                leaderboard_text = "🏆 **Truth Wars Leaderboard**\n\nNo games played yet. Be the first to play!"
+            else:
+                medals = ["🥇", "🥈", "🥉"]
+                lines_wins = []
+                for idx, player in enumerate(top_players, start=1):
+                    medal = medals[idx-1] if idx <= len(medals) else f"{idx}."
+                    username_display = player.username or f"Player {player.id}"
+                    lines_wins.append(
+                        f"{medal} {username_display} — {player.total_wins} wins ({player.win_rate:.1f}% win rate)"
+                    )
+
+                # --- Top Win-Rate (min 5 games) ---
+                win_rate_expr = (UserModel.total_wins * 1.0 / func.nullif(UserModel.total_games, 0))
+                result_wr = await session.execute(
+                    select(UserModel, win_rate_expr.label("wr"))
+                    .where(UserModel.total_games >= 5)
+                    .order_by(desc("wr"))
+                    .limit(3)
+                )
+                top_wr = result_wr.fetchall()
+                lines_wr = []
+                for idx, (player, wr) in enumerate(top_wr, start=1):
+                    medal = medals[idx-1] if idx <= len(medals) else f"{idx}."
+                    username_display = player.username or f"Player {player.id}"
+                    lines_wr.append(f"{medal} {username_display} — {wr*100:.1f}% win rate (\u2191 {player.total_games} games)")
+
+                # --- Top Accuracy (min 20 votes) ---
+                accuracy_expr = (UserModel.correct_votes * 1.0 / func.nullif(UserModel.headlines_voted_on, 0))
+                result_acc = await session.execute(
+                    select(UserModel, accuracy_expr.label("acc"))
+                    .where(UserModel.headlines_voted_on >= 20)
+                    .order_by(desc("acc"))
+                    .limit(3)
+                )
+                top_acc = result_acc.fetchall()
+                lines_acc = []
+                for idx, (player, acc) in enumerate(top_acc, start=1):
+                    medal = medals[idx-1] if idx <= len(medals) else f"{idx}."
+                    username_display = player.username or f"Player {player.id}"
+                    lines_acc.append(f"{medal} {username_display} — {acc*100:.1f}% accuracy")
+
+                leaderboard_text = (
+                    "🏆 **Truth Wars Leaderboard**\n\n"
+                    "**Most Wins:**\n" + "\n".join(lines_wins) + "\n\n"
+                    "**Best Win-Rate (≥5 games):**\n" + ("\n".join(lines_wr) if lines_wr else "No data yet") + "\n\n"
+                    "**Highest Accuracy (≥20 votes):**\n" + ("\n".join(lines_acc) if lines_acc else "No data yet")
+                )
+
+                # User rank (by wins)
+                if user_record and user_record.total_games > 0:
+                    rank_result = await session.execute(
+                        select(func.count()).select_from(UserModel).where(UserModel.total_wins > user_record.total_wins)
+                    )
+                    user_rank = rank_result.scalar_one() + 1
+                    leaderboard_text += f"\n\n📍 **Your Rank (Wins):** {user_rank} (Wins: {user_record.total_wins})"
+
         await context.bot.send_message(
             chat_id=chat_id,
             text=leaderboard_text,
             parse_mode='Markdown'
         )
         logger.info(f"Leaderboard command processed - user_id={user.id}, chat_id={chat_id}")
-        
+
     except Exception as e:
         logger.error(f"Error in leaderboard command - user_id={user.id}, error={str(e)}")
         await context.bot.send_message(
             chat_id=chat_id,
-            text="Sorry, something went wrong. Please try again later."
+            text="🏆 Leaderboard unavailable right now. Please try again later."
         ) 

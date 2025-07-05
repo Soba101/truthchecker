@@ -56,7 +56,7 @@ class Settings:
         self.openai_api_key: str = os.getenv('OPENAI_API_KEY', '')
         self.ai_headline_enabled: bool = os.getenv('AI_HEADLINE_ENABLED', 'false').lower() == 'true'
         self.ai_headline_fallback_enabled: bool = os.getenv('AI_HEADLINE_FALLBACK_ENABLED', 'true').lower() == 'true'
-        self.ai_headline_usage_percentage: int = int(os.getenv('AI_HEADLINE_USAGE_PERCENTAGE', '80'))  # 80% AI, 20% database
+        self.ai_headline_usage_percentage: int = int(os.getenv('AI_HEADLINE_USAGE_PERCENTAGE', '50'))  # 50% AI, 50% database
         
         # Security Settings
         self.secret_key: str = os.getenv('SECRET_KEY', 'dev-secret-key')

@@ -1137,6 +1137,39 @@ class TruthWarsManager:
                     voter_reputation_after=3   # TODO: Calculate based on vote result
                 )
                 session.add(vote)
+                
+                # === Update user statistics ===
+                # Fetch headline truth value to update specific accuracy counters
+                from ..database.models import User as UserModel, Headline as HeadlineModel
+
+                headline_record = await session.get(HeadlineModel, headline_id)
+                headline_is_real = headline_record.is_real if headline_record else None
+                
+                # Ensure user record exists
+                user_record = await session.get(UserModel, voter_id)
+                if user_record is None:
+                    # Create minimal user record if not present
+                    player_data = game_session["players"].get(voter_id, {})
+                    user_record = UserModel(
+                        id=voter_id,
+                        username=player_data.get("username"),
+                        first_name=player_data.get("username")
+                    )
+                    session.add(user_record)
+                    await session.flush()
+                
+                # Increment generic counters
+                user_record.headlines_voted_on += 1
+                if is_correct:
+                    user_record.correct_votes += 1
+                
+                # Increment specialised counters when headline truth known
+                if headline_is_real is not None:
+                    if vote_type == "flag" and not headline_is_real and is_correct:
+                        user_record.fake_headlines_correctly_flagged += 1
+                    if vote_type == "trust" and headline_is_real and is_correct:
+                        user_record.real_headlines_correctly_trusted += 1
+                
                 await session.commit()
                 
             logger.info(f"Headline vote logged - game_id: {game_id}, voter_id: {voter_id}, vote: {vote_type}")
@@ -1511,26 +1544,103 @@ class TruthWarsManager:
     async def _send_game_end_results(self, game_session: Dict, bot_context) -> None:
         """Send final game results and role reveals."""
         try:
+            # --- Persist per-game statistics ---
+            from ..database.models import User as UserModel
+            async with DatabaseSession() as session:
+                winner = game_session.get("winner", "unknown")
+                # Determine winner if still unknown to maintain accurate statistics
+                if winner == "unknown":
+                    truth_points = game_session.get("team_scores", {}).get("truth", 0)
+                    scam_points = game_session.get("team_scores", {}).get("scam", 0)
+                    if truth_points > scam_points:
+                        winner = "truth_seekers"
+                    elif scam_points > truth_points:
+                        winner = "misinformers"
+                    else:
+                        winner = "draw"
+                    # Update session for consistency across later operations
+                    game_session["winner"] = winner
+                winning_faction = None
+                if winner == "misinformers":
+                    winning_faction = "scammer_team"
+                elif winner == "truth_seekers":
+                    winning_faction = "truth_team"
+
+                for player_id, role_info in game_session["player_roles"].items():
+                    user_entry = await session.get(UserModel, player_id)
+                    if not user_entry:
+                        # Basic record if user somehow missing
+                        player_data = game_session["players"].get(player_id, {})
+                        user_entry = UserModel(
+                            id=player_id,
+                            username=player_data.get("username"),
+                            first_name=player_data.get("username")
+                        )
+                        session.add(user_entry)
+
+                    # Increment total games played
+                    user_entry.total_games += 1
+
+                    # Win tracking if faction won
+                    player_faction = role_info.get("faction")
+                    if winning_faction and player_faction == winning_faction:
+                        user_entry.total_wins += 1
+                        if winning_faction == "truth_team":
+                            user_entry.truth_team_wins += 1
+                        else:
+                            user_entry.scammer_team_wins += 1
+
+                    # Aggregate reputation earned
+                    final_rp = game_session["player_reputation"].get(player_id, 3)
+                    user_entry.total_reputation_earned += final_rp
+
+                    # Update average reputation
+                    if user_entry.total_games > 0:
+                        user_entry.average_reputation = user_entry.total_reputation_earned / user_entry.total_games
+
+                await session.commit()
+
             # Build final results message with win reason
             win_reason = game_session.get("win_reason", "Game completed")
-            winner = game_session.get("winner", "unknown")
-            
+            winner = game_session.get("winner")
+
+            # --- Determine winner if it was never explicitly set ---
+            if not winner or winner == "unknown":
+                truth_points = game_session.get("team_scores", {}).get("truth", 0)
+                scam_points = game_session.get("team_scores", {}).get("scam", 0)
+                if truth_points > scam_points:
+                    winner = "truth_seekers"
+                    win_reason = win_reason or f"Truth Team leading {truth_points}-{scam_points} when game ended"
+                elif scam_points > truth_points:
+                    winner = "misinformers"
+                    win_reason = win_reason or f"Scammers leading {scam_points}-{truth_points} when game ended"
+                else:
+                    winner = "draw"
+                    win_reason = win_reason or "Scores were tied when the game ended"
+
+            # --- Map winner keyword to display text/emoji ---
             if winner == "misinformers":
                 winner_emoji = "🔴"
                 winner_name = "**SCAMMERS**"
             elif winner == "truth_seekers":
                 winner_emoji = "🔵"
                 winner_name = "**TRUTH TEAM**"
+            elif winner == "draw":
+                winner_emoji = "🤝"
+                winner_name = "**NO WINNER (DRAW)**"
+            elif winner == "game_ended_early":
+                winner_emoji = "🏁"
+                winner_name = "**NO WINNER**"
             else:
                 winner_emoji = "🎯"
                 winner_name = "**UNKNOWN**"
-            
+
+            results_text = "🎉 **GAME OVER - FINAL RESULTS**\n\n"
+            results_text += f"{winner_emoji} **WINNER:** {winner_name}\n"
             # Helper to escape underscores for Telegram Markdown
             def _esc(text: str) -> str:
                 return text.replace("_", "\\_")
 
-            results_text = "🎉 **GAME OVER - FINAL RESULTS**\n\n"
-            results_text += f"{winner_emoji} **WINNER:** {winner_name}\n"
             results_text += f"📄 **Reason:** {_esc(win_reason)}\n\n"
             
             # Add win progress summary
