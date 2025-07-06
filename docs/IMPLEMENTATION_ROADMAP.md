@@ -36,7 +36,7 @@ This document outlines the complete transformation needed to implement the refin
 - ✅ 5-round limit with proper transition logic
 - ✅ Trust/Flag voting handling
 - ✅ Shadow ban enforcement during phases
-- ✅ Snipe opportunity phases (rounds 2 & 4)
+- ✅ Snipe opportunity phase for **one-time** snipe (usable during Rounds 1–4)
 - ✅ Win condition checking after each round
 
 ### 3. **Truth Wars Manager Transformation** ✅ *COMPLETED*
@@ -49,7 +49,7 @@ This document outlines the complete transformation needed to implement the refin
 - ✅ **Drunk Role Rotation**: Assign "Drunk" role to different normie each round
 - ✅ **Vote Weight System**: Handle Influencer's 2x vote weight
 - ✅ **Win Condition Tracking**: Count fake headlines trusted/flagged (3 = win)
-- ✅ **Snipe Mechanics**: Handle shadow ban abilities every 2 rounds
+- ✅ **Snipe Mechanics**: Implement single-use snipe (Rounds 1–4)
 
 ### 4. **Database Model Updates** ✅ *COMPLETED*
 **File:** `bot/database/models.py`

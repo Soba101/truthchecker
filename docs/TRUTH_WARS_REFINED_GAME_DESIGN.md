@@ -68,8 +68,7 @@ AI generates a headline (real or fake):
 ### **😈 Scammer(s)**
 - Know which headlines are real/fake
 - Goal: Manipulate others into wrong votes
-- **One-time "snipe" ability** per game to shadow ban suspected Fact Checker
-- **Risk**: If they snipe wrong person, they get shadow banned instead
+- No special abilities beyond persuasion
 
 ### **🧍 "Drunk" Role**
 - **Rotates among normies each round**
@@ -84,8 +83,8 @@ AI generates a headline (real or fake):
 ## 🚫 **Shadow Ban System**
 
 ### **When It Happens**
-- Every 2 rounds, eligible roles can use their "snipe" ability
-- Failed snipe attempts result in self-shadow ban
+- During Rounds **1–4**, the **Fact Checker** may use their **one-time snipe** ability to shadow-ban one player
+- If the Fact Checker snipes an innocent target, they become shadow-banned instead
 
 ### **Shadow Ban Effects**
 - Banned player cannot talk during discussion phase

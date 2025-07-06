@@ -5,7 +5,7 @@ A sophisticated Telegram bot implementing the "Truth Wars" game - an educational
 ## 🎮 Game Overview
 
 Truth Wars combines social deduction with media literacy education:
-- **5-8 players** engage in a **5-round fixed structure**
+- **5-10 players** engage in a **5-round fixed structure**
 - **Trust/Flag voting** on real and fake headlines
 - **Reputation system** (3 RP → Ghost Viewer when depleted)
 - **Role-based gameplay** with Fact Checkers, Scammers, Influencers, and rotating Drunk educators
@@ -17,7 +17,7 @@ Truth Wars combines social deduction with media literacy education:
 - **Educational Focus**: Learn to identify misinformation through gameplay
 - **Reputation System**: 3 Reputation Points system with Ghost Viewer mechanics
 - **Role Rotation**: Dynamic Drunk role rotation among Normies for education
-- **Strategic Depth**: Snipe abilities available every 2 rounds
+- **Strategic Depth**: One-time Snipe ability (Rounds 1–4) adds high-stakes moments
 - **Progress Tracking**: Comprehensive statistics and learning analytics
 - **Cross-Platform**: Works in any Telegram group chat
 
@@ -26,30 +26,21 @@ Truth Wars combines social deduction with media literacy education:
 ```
 truthchecker/
 ├── bot/                    # Main bot application
-│   ├── main.py            # Bot entry point and application setup
-│   ├── handlers/          # Command and message handlers
-│   │   ├── command_handlers.py     # Basic bot commands
-│   │   ├── truth_wars_handlers.py  # Game-specific handlers
-│   │   ├── message_handlers.py     # Chat message processing
-│   │   └── error_handlers.py       # Error handling
-│   ├── game/              # Game logic modules
-│   │   ├── game_manager.py         # Core game management
-│   │   ├── truth_wars_manager.py   # Truth Wars specific logic
-│   │   ├── game_states.py          # Game state definitions
-│   │   └── roles.py                # Player role management
-│   ├── database/          # Database models and operations
-│   │   ├── models.py               # SQLAlchemy models
-│   │   ├── database.py             # Database configuration
-│   │   └── seed_data.py            # Initial data and headlines
-│   └── utils/             # Utility functions
-│       ├── config.py               # Configuration management
-│       └── logging_config.py       # Logging setup
-├── docs/                  # Comprehensive documentation
-├── tests/                 # Test files
+│   ├── ai/                # AI headline generation
+│   ├── database/          # Async SQLAlchemy models & sessions
+│   ├── game/              # Core game logic (roles, state machine, manager)
+│   ├── handlers/          # Telegram command/message handlers
+│   ├── utils/             # Config & logging helpers
+│   └── main.py            # Bot entry point
+├── docs/                  # Documentation (architecture, game design, etc.)
+├── deploy/                # Deployment scripts / configs
+├── tests/                 # Pytest test suite
+├── run_bot.py             # Simple launcher helper
 ├── requirements.txt       # Python dependencies
-├── .env.example          # Environment variables template
-├── run_bot.py            # Simple bot launcher script
-└── README.md             # This file
+├── game.db                # SQLite dev database
+├── SETUP_GUIDE.md         # Quick setup instructions
+├── BOTFATHER_SETUP.md     # BotFather configuration helper
+└── README.md              # This file
 ```
 
 ## 🚀 Quick Start
