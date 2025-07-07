@@ -1,0 +1,25 @@
+version: "3.9"
+
+services:
+  bot:
+    build: .
+    container_name: truthchecker-bot
+    restart: unless-stopped
+
+    # Pass environment variables securely
+    # Option 1: Use .env file in project root
+    env_file:
+      - .env
+    
+    # Option 2: Set environment variables directly (commented example)
+    # environment:
+    #   - TELEGRAM_BOT_TOKEN=your_telegram_token_here
+    #   - OPENAI_API_KEY=your_openai_key_here
+
+    # Persist SQLite database to host
+    volumes:
+      - ./game.db:/app/game.db
+
+    # If you plan to use webhooks, expose ports here
+    # ports:
+    #   - "8080:8080" 
