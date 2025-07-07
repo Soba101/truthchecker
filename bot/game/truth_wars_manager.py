@@ -7,7 +7,7 @@ role system, state machine, and bot interface. It handles the complete game life
 
 import uuid
 from typing import Dict, List, Optional, Any, Tuple
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import asyncio
 import random
 
@@ -42,9 +42,11 @@ class TruthWarsManager:
     
     def __init__(self):
         """Initialize the Truth Wars manager."""
-        self.active_games: Dict[str, Dict] = {}  # game_id -> game_session_data
+        self.active_games: Dict[str, Dict[str, Any]] = {}
+        self.game_loops: Dict[str, asyncio.Task] = {}
+        self._bot_context: Optional[Any] = None
+        self.GAME_LOOP_INTERVAL = 1
         self.settings = get_settings()
-        self.bot_context = None  # Will be set by the bot handlers
         
     async def create_game(self, chat_id: int, creator_user_id: int, settings: Optional[Dict] = None) -> str:
         """
@@ -98,7 +100,7 @@ class TruthWarsManager:
                 "eliminated_players": [],
                 "game_effects": {},  # Store temporary effects like troll ability
                 "game_over": False,  # Cache game over status to prevent repeated win condition checks
-                "created_at": datetime.utcnow(),
+                "created_at": datetime.now(timezone.utc),
                 
                 # Reputation System tracking
                 "player_reputation": {},  # Will be populated when players join
@@ -144,10 +146,10 @@ class TruthWarsManager:
             }
             
             # === NEW: set elimination cap based on player count ===
-            game_session["elimination_limit"] = max(0, len(game_session["players"]) - 2)
+            self.active_games[game_id_str]["elimination_limit"] = max(0, len(self.active_games[game_id_str]["players"]) - 2)
             # Ensure counters start fresh
-            game_session["eliminations_total"] = 0
-            game_session["snipe_used_this_round"] = False
+            self.active_games[game_id_str]["eliminations_total"] = 0
+            self.active_games[game_id_str]["snipe_used_this_round"] = False
             
             # Start the lobby phase
             lobby_result = self.active_games[game_id_str]["state_machine"].start_game()
@@ -210,7 +212,7 @@ class TruthWarsManager:
             game_session["players"][user_id] = {
                 "user_id": user_id,
                 "username": username or f"Player {user_id}",
-                "joined_at": datetime.utcnow()
+                "joined_at": datetime.now(timezone.utc)
             }
             
             # Initialize player reputation (starts with 3 RP as per design document)
@@ -266,12 +268,12 @@ class TruthWarsManager:
                 game = await session.get(Game, actual_game_id)
                 if game:
                     game.status = GameStatus.ACTIVE
-                    game.started_at = datetime.utcnow()
+                    game.started_at = datetime.now(timezone.utc)
                 
                 truth_wars_game = await session.get(TruthWarsGame, actual_game_id)
                 if truth_wars_game:
                     truth_wars_game.phase = "role_assignment"
-                    truth_wars_game.phase_end_time = datetime.utcnow() + timedelta(seconds=60)
+                    truth_wars_game.phase_end_time = datetime.now(timezone.utc) + timedelta(seconds=60)
             
             # Assign roles to players
             player_ids = list(game_session["players"].keys())
@@ -1336,6 +1338,7 @@ class TruthWarsManager:
             if new_phase == "discussion":
                 # Headline will be sent via pending notification loop to avoid duplicates
                 await self._remind_drunk_to_teach(game_session, bot_context)
+                await self._send_scammer_swap_prompt(game_session, bot_context)
             elif new_phase == "voting":
                 pass  # No longer send player voting interface here
             elif new_phase == "snipe_opportunity":
@@ -1346,6 +1349,8 @@ class TruthWarsManager:
             elif new_phase == "await_continue":
                 await self._send_continue_end_options(game_session, bot_context)
             elif new_phase == "game_end":
+                # CRITICAL FIX: Ensure game_over flag is set when transitioning to game_end phase
+                game_session["game_over"] = True
                 await self._send_game_end_results(game_session, bot_context)
             # --- CRITICAL: Handle PLAYER_VOTING phase ---
             elif new_phase == "player_voting":
@@ -2547,49 +2552,33 @@ class TruthWarsManager:
             return {"success": False, "message": "Failed to end game"}
     
     async def _game_loop(self, game_id: str) -> None:
-        """
-        Main game loop that handles automatic phase transitions.
-        
-        This runs continuously for each game, checking if phases should
-        transition based on time limits or game conditions.
-        """
+        """The main game loop for a single game instance."""
         try:
             while game_id in self.active_games:
-                game_session = self.active_games[game_id]
-                current_phase = game_session["state_machine"].get_current_phase_type()
-                
-                # Stop loop if game ended
-                if current_phase == PhaseType.GAME_END:
-                    logger.info(f"Game loop ending for game {game_id} - game finished")
+                game_session = self.active_games.get(game_id)
+                if not game_session or game_session.get("game_over"):
                     break
                 
-                # Check if phase should transition
-                game_state = self._get_game_state(game_session)
-                if game_session["state_machine"].can_transition(game_state):
-                    transition_result = game_session["state_machine"].transition_phase(game_state)
-                    
-                    if transition_result:
-                        new_phase = transition_result["to_phase"]
-                        logger.info(f"Game {game_id} transitioned to phase: {new_phase}")
-                        
-                        # Send phase transition message to chat
-                        await self._handle_phase_transition(game_session, transition_result)
-                        
-                        # Handle specific phase transitions
-                        if new_phase == "headline_reveal":
-                            await self._start_news_phase(game_session)
-                        elif new_phase == "round_results":
-                            await self._resolve_voting(game_session)
-                        # REMOVED: elif new_phase == "snipe_opportunity":
-                        # REMOVED:     await self._send_snipe_opportunity_message(game_session, getattr(self, '_bot_context', None))
-                
-                # Wait 2 seconds before next check (more responsive)
-                await asyncio.sleep(2)
-                
+                # FIXED: Only check timeout for active games that haven't ended normally
+                # Check for game timeout (e.g., stuck for over an hour)
+                if (datetime.now(timezone.utc) - game_session["created_at"]) > timedelta(hours=1):
+                    logger.warning(f"Game {game_id} has timed out and will be cleaned up.")
+                    # Use a more robust cleanup mechanism
+                    await self.end_game(game_id)
+                    break
+
+                await self._check_phase_transition(game_session)
+                await asyncio.sleep(self.GAME_LOOP_INTERVAL)
+        except asyncio.CancelledError:
+            logger.info(f"Game loop for {game_id} was cancelled.")
         except Exception as e:
-            logger.error(f"Game loop error for game {game_id}: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"Error in game loop for {game_id}: {e}", exc_info=True)
+        finally:
+            logger.info(f"Game loop for {game_id} has finished.")
+            # Ensure game is removed from active games upon exiting loop
+            if game_id in self.active_games:
+                del self.active_games[game_id]
+                logger.info(f"Cleaned up active game {game_id}.")
     
     async def cleanup_finished_games(self) -> None:
         """Remove finished games from memory."""
@@ -2597,7 +2586,7 @@ class TruthWarsManager:
         
         for game_id, game_session in self.active_games.items():
             # Remove games that ended more than 1 hour ago
-            if (datetime.utcnow() - game_session["created_at"]) > timedelta(hours=1):
+            if (datetime.now(timezone.utc) - game_session["created_at"]) > timedelta(hours=1):
                 current_phase = game_session["state_machine"].get_current_phase_type()
                 if current_phase == PhaseType.GAME_END:
                     finished_games.append(game_id)
@@ -2871,3 +2860,39 @@ class TruthWarsManager:
             game_session["player_votes"] = {}
         except Exception as e:
             logger.error(f"Failed to process player voting results: {e}")
+
+    async def _send_scammer_swap_prompt(self, game_session: Dict, bot_context) -> None:
+        """Send a private message to the Scammer asking if they want to swap the headline."""
+        if not bot_context:
+            return
+
+        scammer_id = None
+        scammer_role = None
+        for pid, role_info in game_session["player_roles"].items():
+            role = role_info.get("role")
+            if role and getattr(role, "role_type", None).value == "scammer":
+                scammer_id = pid
+                scammer_role = role
+                break
+
+        if scammer_id and not scammer_role.has_swapped_headline:
+            game_id = game_session["game_id"]
+            prompt_message = (
+                "😈 **Headline Swap Opportunity**\n\n"
+                "Do you want to use your one-time ability to swap the current headline for a new one?"
+            )
+            keyboard = [
+                [
+                    {"text": "✅ Yes, Swap It", "callback_data": f"swap_headline_yes_{game_id}"},
+                    {"text": "❌ No, Keep It", "callback_data": f"swap_headline_no_{game_id}"},
+                ]
+            ]
+            reply_markup = {"inline_keyboard": keyboard}
+
+            try:
+                await bot_context.bot.send_message(
+                    chat_id=scammer_id, text=prompt_message, reply_markup=reply_markup
+                )
+                logger.info(f"Sent headline swap prompt to Scammer {scammer_id} for game {game_id}")
+            except Exception as e:
+                logger.error(f"Failed to send headline swap prompt to Scammer {scammer_id}: {e}")

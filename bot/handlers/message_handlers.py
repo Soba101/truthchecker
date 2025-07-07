@@ -66,43 +66,22 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         await context.bot.send_message(
             chat_id=chat_id,
             text="""
-📚 **HOW TO PLAY TRUTH WARS**
+📚 **How to Play Truth Wars**
 
-🎯 **OBJECTIVE:**
-🔵 **Truth Seekers:** Eliminate all misinformers
-🔴 **Misinformers:** Survive & avoid detection
+🔵 Truth Seekers – expose misinformers  
+🔴 Misinformers – avoid detection
 
-📰 **GAMEPLAY:**
-Each round you analyze a **news headline**:
-• 🤔 Is it **real** or **fake** news?
-• 💬 **Discuss** with other players
-• 🔍 Use your **role abilities** (`/ability`)
-• 🗳️ **Vote Trust/Flag** on the headline
-• 📚 **Learn** from explanations!
+🌀 **Round Loop** (5 rounds)  
+1️⃣ Headline appears  
+2️⃣ Discuss & use `/ability`  
+3️⃣ Vote **Trust** or **Flag**  
+4️⃣ Truth + tips revealed
 
-🎭 **EXAMPLE ROLES:**
-📋 **Fact-Checker** - Investigate players
-🔬 **Researcher** - Verify sources
-📰 **Journalist** - Share insights
-😈 **Scammer** - Spread confusion
-🎭 **Deepfaker** - Create deceptions
-🧍 **Normie** - Learn through discussion
+⚡ **Setup**  
+• Add the bot to a group (5-10 players)  
+• Type `/truthwars` → players join → start
 
-🏆 **GAME STRUCTURE:**
-• 🎭 Get secret role (private message)
-• 📰 5 rounds of headline analysis
-• 🗳️ Trust/Flag voting each round
-• 📚 Educational explanations
-• 🎉 Team victory & learning outcomes!
-
-🎮 **QUICK SETUP:**
-1. Add bot to group chat (5-10 players)
-2. Use `/truthwars` to create game
-3. Players join & creator starts
-
-💡 **PRO TIP:** Look for emotional language, check sources, and think critically!
-
-🧠 **Learn real media literacy skills while playing!**
+💡 Verify sources, question sensational claims, think critically!
             """,
             parse_mode='Markdown'
         )

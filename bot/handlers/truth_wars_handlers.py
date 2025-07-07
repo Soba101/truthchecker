@@ -16,6 +16,7 @@ from ..game.truth_wars_manager import TruthWarsManager
 from ..utils.logging_config import get_logger
 from ..database.models import User
 from ..database.database import DatabaseSession
+from ..game.roles import RoleType
 
 # Setup logger and manager
 logger = get_logger(__name__)
@@ -597,6 +598,13 @@ async def handle_truth_wars_callback(update: Update, context: ContextTypes.DEFAU
             await handle_end_game_callback(update, context)
         elif callback_data.startswith("snipe_"):
             await handle_snipe_callback(update, context)
+        elif callback_data.startswith("use_ability_"):
+            game_id = callback_data.split("_")[2]
+            await handle_ability_button(update, context, game_id)
+
+        elif callback_data.startswith("swap_headline_"):
+            await handle_swap_headline_callback(update, context)
+
         else:
             logger.warning(f"Unhandled callback data: {callback_data}")
             await query.answer("❌ Unknown action", show_alert=True)
@@ -1037,4 +1045,132 @@ async def handle_snipe_callback(update: Update, context: ContextTypes.DEFAULT_TY
             await query.answer(f"❌ {result.get('message', 'Snipe failed')}", show_alert=True)
     except Exception as e:
         logger.error(f"Error processing snipe callback: {e}")
-        await query.answer("❌ Snipe failed", show_alert=True) 
+        await query.answer("❌ Snipe failed", show_alert=True)
+
+
+async def handle_swap_headline_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle the Scammer's response to the headline swap prompt."""
+    query = update.callback_query
+    await query.answer()
+
+    query_data = query.data
+    user_id = query.from_user.id
+    parts = query_data.split("_")
+    action = parts[2]
+    game_id = parts[3]
+
+    game_session = truth_wars_manager.active_games.get(game_id)
+
+    if not game_session or user_id not in game_session.get("player_roles", {}):
+        await query.edit_message_text(text="Invalid action or game not found.")
+        return
+
+    player_role = game_session["player_roles"].get(user_id)
+
+    if not player_role or player_role.role_type != RoleType.SCAMMER:
+        await query.edit_message_text(text="You are not the Scammer.")
+        return
+
+    if action == "yes":
+        # Scammer chose to swap the headline
+        result = await truth_wars_manager.use_role_ability(game_id, user_id)
+        if result.get("success"):
+            await query.edit_message_text(text="✅ Headline swapped successfully!")
+        else:
+            await query.edit_message_text(text=f"❌ {result.get('message', 'Failed to swap headline.')}")
+    else:
+        # Scammer chose not to swap
+        await query.edit_message_text(text="✅ Got it. The current headline will remain.")
+
+
+async def handle_game_action_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Handle callbacks for generic game actions like voting or using abilities.
+    """
+    query = update.callback_query
+    callback_data = query.data
+    
+    logger.info(f"Game action callback received: {callback_data}")
+    
+    try:
+        if callback_data.startswith("vote_trust_"):
+            await handle_trust_vote(update, context)
+        elif callback_data.startswith("vote_flag_"):
+            await handle_flag_vote(update, context)
+        elif callback_data.startswith("vote_player_"):
+            await handle_vote_player_callback(update, context)
+        elif callback_data.startswith("continue_game_"):
+            await handle_continue_game_callback(update, context)
+        elif callback_data.startswith("end_game_"):
+            await handle_end_game_callback(update, context)
+        elif callback_data.startswith("snipe_"):
+            await handle_snipe_callback(update, context)
+        elif callback_data.startswith("use_ability_"):
+            game_id = callback_data.split("_")[2]
+            await handle_ability_button(update, context, game_id)
+
+        elif callback_data.startswith("swap_headline_"):
+            await handle_swap_headline_callback(update, context)
+
+        else:
+            logger.warning(f"Unhandled game action callback: {callback_data}")
+            await query.answer("❌ Unknown action", show_alert=True)
+        
+    except Exception as e:
+        logger.error(f"Error handling game action callback: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        try:
+            await query.answer("❌ Something went wrong. Please try again.", show_alert=True)
+        except Exception as alert_error:
+            logger.error(f"Failed to send error alert: {alert_error}")
+
+
+async def handle_ability_button(update: Update, context: ContextTypes.DEFAULT_TYPE, game_id: str) -> None:
+    """
+    Handle ability button press from inline keyboards.
+    
+    This function processes when a player clicks an ability button
+    and activates their role's special ability.
+    """
+    query = update.callback_query
+    user_id = update.effective_user.id
+    
+    try:
+        # Acknowledge the callback query
+        await query.answer()
+        
+        # Set bot context for the manager
+        truth_wars_manager.set_bot_context(context)
+        
+        # Set game context
+        context.chat_data['current_game_id'] = game_id
+        
+        # Try to use the player's role ability
+        ability_result = await truth_wars_manager.use_role_ability(game_id, user_id)
+        
+        if ability_result["success"]:
+            # Ability was successfully used
+            await query.edit_message_text(
+                f"✅ {ability_result['message']}",
+                parse_mode='Markdown'
+            )
+            logger.info(f"Player {user_id} successfully used ability in game {game_id}")
+        else:
+            # Ability couldn't be used
+            await query.edit_message_text(
+                f"❌ {ability_result['message']}"
+            )
+            logger.info(f"Player {user_id} failed to use ability in game {game_id}: {ability_result['message']}")
+            
+    except Exception as e:
+        logger.error(f"Error handling ability button: {e}")
+        try:
+            await query.edit_message_text("❌ Failed to use ability. Please try again.")
+        except Exception:
+            # If editing fails, try answering the callback
+            try:
+                await query.answer("❌ Failed to use ability. Please try again.", show_alert=True)
+            except Exception:
+                pass  # Nothing more we can do 

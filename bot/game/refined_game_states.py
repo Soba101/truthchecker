@@ -7,7 +7,8 @@ implementing the new 5-round structure with Trust/Flag voting system.
 
 from enum import Enum
 from typing import Dict, Any, Optional, List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+import inspect
 
 from ..utils.logging_config import get_logger
 
@@ -43,7 +44,7 @@ class RefinedGameStateMachine:
     def __init__(self):
         """Initialize the game state machine."""
         self.current_phase = PhaseType.LOBBY
-        self.phase_start_time = datetime.utcnow()
+        self.phase_start_time = datetime.now(timezone.utc)
         self.round_number = 0
         self.max_rounds = 5
         self.phase_durations = {
@@ -76,7 +77,7 @@ class RefinedGameStateMachine:
             return {"success": False, "message": "Game already started"}
         
         self.current_phase = PhaseType.LOBBY
-        self.phase_start_time = datetime.utcnow()
+        self.phase_start_time = datetime.now(timezone.utc)
         
         return {
             "success": True,
@@ -96,7 +97,7 @@ class RefinedGameStateMachine:
             bool: True if phase can transition
         """
         # Check time-based transitions
-        time_elapsed = (datetime.utcnow() - self.phase_start_time).total_seconds()
+        time_elapsed = (datetime.now(timezone.utc) - self.phase_start_time).total_seconds()
         phase_time_limit = self.phase_durations.get(self.current_phase, 300)
         
         if self.current_phase == PhaseType.LOBBY:
@@ -114,6 +115,7 @@ class RefinedGameStateMachine:
             
         elif self.current_phase == PhaseType.DISCUSSION:
             # Transition after 3 minutes OR when all eligible players have voted
+            print(f"DEBUG (can_transition): Phase=DISCUSSION, time_elapsed={time_elapsed}, limit={phase_time_limit}")
             all_voted = game_state.get("all_eligible_voted", False)
             return all_voted or time_elapsed >= phase_time_limit
             
@@ -232,7 +234,7 @@ class RefinedGameStateMachine:
                 self.current_phase = PhaseType.GAME_END
         
         # Update phase start time
-        self.phase_start_time = datetime.utcnow()
+        self.phase_start_time = datetime.now(timezone.utc)
         
         # Log transition
         logger.info(f"Phase transition: {previous_phase.value} -> {self.current_phase.value}, Round: {self.round_number}")
@@ -258,7 +260,7 @@ class RefinedGameStateMachine:
         """
         previous_phase = self.current_phase
         self.current_phase = target_phase
-        self.phase_start_time = datetime.utcnow()
+        self.phase_start_time = datetime.now(timezone.utc)
         
         logger.info(f"Forced phase transition: {previous_phase.value} -> {target_phase.value}")
         
@@ -284,7 +286,7 @@ class RefinedGameStateMachine:
         if self.current_phase not in self.phase_durations:
             return 0
             
-        elapsed = (datetime.utcnow() - self.phase_start_time).total_seconds()
+        elapsed = (datetime.now(timezone.utc) - self.phase_start_time).total_seconds()
         remaining = self.phase_durations[self.current_phase] - elapsed
         
         return max(0, int(remaining))

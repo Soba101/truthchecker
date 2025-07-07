@@ -7,9 +7,9 @@ and coordinates between different game types and the bot handlers.
 
 import uuid
 from typing import Dict, Optional, Type, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
-from ..database.models import Game, GamePlayer, GameState, User
+from ..database.models import Game, GamePlayer, GameState, User, GameStatus
 from ..database.database import DatabaseSession
 from ..utils.logging_config import get_logger, log_game_event
 from ..utils.config import get_settings
@@ -159,8 +159,8 @@ class GameManager:
                     return False
                 
                 # Update game status
-                game.status = "active"
-                game.started_at = datetime.utcnow()
+                game.status = GameStatus.ACTIVE
+                game.started_at = datetime.now(timezone.utc)
                 
                 # Create initial game state
                 initial_state = GameState(
@@ -237,8 +237,8 @@ class GameManager:
                     return False
                 
                 # Update game status
-                game.status = reason
-                game.completed_at = datetime.utcnow()
+                game.status = GameStatus.COMPLETED
+                game.completed_at = datetime.now(timezone.utc)
             
             # Remove from active games
             if game_id in self.active_games:
@@ -276,7 +276,7 @@ class GameManager:
         This should be called periodically to prevent resource leaks.
         """
         timeout_seconds = self.settings.game_session_timeout
-        cutoff_time = datetime.utcnow() - timedelta(seconds=timeout_seconds)
+        cutoff_time = datetime.now(timezone.utc) - timedelta(seconds=timeout_seconds)
         
         try:
             async with DatabaseSession() as session:

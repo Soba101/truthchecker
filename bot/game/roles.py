@@ -58,7 +58,7 @@ class Role(ABC):
     
     def can_use_snipe(self) -> bool:
         """Check if this role can use snipe ability."""
-        return hasattr(self, 'snipe_ability') and not self.has_used_snipe
+        return getattr(self, 'snipe_ability', False) and not self.has_used_snipe
     
     def use_snipe(self, target_user_id: int, game_state: Dict, sniper_id: int) -> Dict[str, Any]:
         """
