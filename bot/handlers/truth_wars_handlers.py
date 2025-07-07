@@ -379,9 +379,17 @@ async def ability_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     
     game_id = context.chat_data.get('current_game_id')
     if not game_id:
+        # Fallback: search through active games to find one where this user is a participant
+        for gid, session in truth_wars_manager.active_games.items():
+            if update.effective_user.id in session.get("players", {}):
+                game_id = gid
+                # Cache for future calls in this DM
+                context.chat_data['current_game_id'] = game_id
+                break
+
+    if not game_id:
         await update.message.reply_text(
-            "❌ No active Truth Wars game in this chat."
-        )
+            "❌ No active Truth Wars game found for you right now. Join a game first.")
         return
     
     user_id = update.effective_user.id

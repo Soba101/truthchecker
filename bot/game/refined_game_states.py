@@ -201,7 +201,15 @@ class RefinedGameStateMachine:
             if self._should_end_game(game_state):
                 self.current_phase = PhaseType.GAME_END
             else:
-                self.current_phase = PhaseType.PLAYER_VOTING
+                # === NEW: If a snipe already occurred this round, skip player voting ===
+                if game_state.get("snipe_used_this_round", False):
+                    if self.round_number < self.max_rounds:
+                        self.round_number += 1
+                        self.current_phase = PhaseType.HEADLINE_REVEAL
+                    else:
+                        self.current_phase = PhaseType.GAME_END
+                else:
+                    self.current_phase = PhaseType.PLAYER_VOTING
         
         elif self.current_phase == PhaseType.PLAYER_VOTING:
             # After player-voting phase, either continue with next round or end

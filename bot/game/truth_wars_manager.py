@@ -136,8 +136,18 @@ class TruthWarsManager:
                 
                 # Shadow ban system tracking
                 "shadow_banned_players": {},  # {player_id: rounds_remaining}
-                "snipe_abilities_used": []  # Track which players used snipe abilities
+                "snipe_abilities_used": [],  # Track which players used snipe abilities
+                # === NEW: elimination cap tracking ===
+                "elimination_limit": None,   # Will be set once game starts
+                "eliminations_total": 0,     # Count of all shadow bans (vote or snipe)
+                "snipe_used_this_round": False  # Reset each round
             }
+            
+            # === NEW: set elimination cap based on player count ===
+            game_session["elimination_limit"] = max(0, len(game_session["players"]) - 2)
+            # Ensure counters start fresh
+            game_session["eliminations_total"] = 0
+            game_session["snipe_used_this_round"] = False
             
             # Start the lobby phase
             lobby_result = self.active_games[game_id_str]["state_machine"].start_game()
@@ -792,6 +802,12 @@ class TruthWarsManager:
         # Clear any remaining votes from previous round (safeguard)
         game_session["votes"] = {}
         
+        # === NEW: reset round-based tracking ===
+        game_session["snipe_used_this_round"] = False
+        # Calculate elimination limit if not already set (handles cases where it was 0 during lobby)
+        if game_session.get("elimination_limit") in (None, 0):
+            game_session["elimination_limit"] = max(0, len(game_session["players"]) - 2)
+        
         # Reduce shadow ban durations at start of new round
         if current_round > 1:
             self._reduce_shadow_ban_durations(game_session)
@@ -821,6 +837,12 @@ class TruthWarsManager:
                 "source": headline.source,
                 "explanation": headline.explanation
             }
+
+            # === NEW: Provide the Drunk player with inside info immediately ===
+            # Ensure the active Drunk receives the correct answer and teaching tip as soon as
+            # the headline for this round is ready. This keeps the gameplay experience
+            # consistent with the role description ("You know the truth about THIS round's headline").
+            await self._send_drunk_correct_answer(game_session)
             
             # Note: Players must use /ability command to activate their special abilities
             # No automatic ability activation
@@ -1083,14 +1105,26 @@ class TruthWarsManager:
     
     def _get_win_progress_display(self, game_session: Dict) -> str:
         """Generate progress display for current win conditions."""
-        progress = game_session["win_progress"]
-        
-        return (
-            f"📊 **Win Progress:**\n"
-            f"🔴 **Scammers:** {progress['fake_headlines_trusted']}/3 fake headlines trusted\n"
-            f"🔵 **Truth Team:** {progress['fake_headlines_flagged']}/3 fake headlines flagged\n"
-            f"⏱️ **Round:** {progress['rounds_completed']}/5"
-        )
+        # Retrieve both legacy headline counters and the newer v3 team point scores
+        progress = game_session.get("win_progress", {})
+        scores = game_session.get("team_scores", {"truth": 0, "scam": 0})
+        rounds_completed = progress.get("rounds_completed", game_session.get("round_number", 0))
+
+        # Prefer the v3 point system if any points have been recorded; otherwise, show headline counters
+        if scores.get("truth", 0) > 0 or scores.get("scam", 0) > 0:
+            return (
+                f"📊 **Win Progress:**\n"
+                f"🔴 **Scammers:** {scores['scam']}/3 points\n"
+                f"🔵 **Truth Team:** {scores['truth']}/3 points\n"
+                f"⏱️ **Round:** {rounds_completed}/5"
+            )
+        else:
+            return (
+                f"📊 **Win Progress:**\n"
+                f"🔴 **Scammers:** {progress.get('fake_headlines_trusted', 0)}/3 fake headlines trusted\n"
+                f"🔵 **Truth Team:** {progress.get('fake_headlines_flagged', 0)}/3 fake headlines flagged\n"
+                f"⏱️ **Round:** {rounds_completed}/5"
+            )
     
     async def _log_action(self, game_id: str, player_id: int, action_type: str, data: Any) -> None:
         """Log a player action to the database."""
@@ -1187,6 +1221,8 @@ class TruthWarsManager:
                 if target_id:
                     await self._apply_shadow_ban(game_session, target_id, rounds=1)
                     logger.info(f"Applied shadow ban to player {target_id}")
+                    # Mark that a snipe was used this round
+                    game_session["snipe_used_this_round"] = True
                     
             elif effect == "shadow_ban_self":
                 # Shadow ban the sniper (failed snipe)
@@ -1194,6 +1230,8 @@ class TruthWarsManager:
                 if sniper_id:
                     await self._apply_shadow_ban(game_session, sniper_id, rounds=1)
                     logger.info(f"Applied shadow ban to sniper {sniper_id} (failed snipe)")
+                    # Mark that a snipe was used this round
+                    game_session["snipe_used_this_round"] = True
             
             # Store temporary effects (for other abilities)
             if "effect" in ability_result:
@@ -1214,6 +1252,9 @@ class TruthWarsManager:
         try:
             # Add player to shadow ban tracking
             game_session["shadow_banned_players"][player_id] = rounds
+            
+            # === NEW: increment total eliminations counter ===
+            game_session["eliminations_total"] = game_session.get("eliminations_total", 0) + 1
             
             # Get player info for notification
             player_data = game_session["players"].get(player_id, {})
@@ -1323,6 +1364,16 @@ class TruthWarsManager:
         """Send interface for players to vote each other out."""
         try:
             from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+            
+            # === NEW: skip voting if elimination cap reached ===
+            if game_session.get("eliminations_total", 0) >= game_session.get("elimination_limit", 999):
+                await bot_context.bot.send_message(
+                    chat_id=game_session["chat_id"],
+                    text="🚫 Elimination cap reached – no more shadow bans this round."
+                )
+                # Fast-forward phase transition
+                await self._check_phase_transition(game_session)
+                return
             
             alive_players = [
                 (pid, player_data) for pid, player_data in game_session["players"].items() 
@@ -2343,36 +2394,82 @@ class TruthWarsManager:
     async def _activate_scammer_ability(self, game_session: Dict, user_id: int, role) -> Dict[str, Any]:
         """Activate Scammer's information ability."""
         try:
-            current_headline = game_session.get("current_headline")
             bot_context = getattr(self, '_bot_context', None)
-            
-            headline_is_real = current_headline.get("is_real", True)
-            headline_text = current_headline.get("text", "Unknown headline")
-            explanation = current_headline.get("explanation", "No explanation available")
-            
-            correct_answer = "REAL" if headline_is_real else "FAKE"
-            scammer_message = (
-                f"😈 **SCAMMER INTEL**\n\n"
-                f"📰 **Headline:** {headline_text}\n\n"
-                f"🎯 **Truth:** This headline is **{correct_answer}**\n\n"
-                f"💡 **Background:** {explanation}\n\n"
-                f"🎭 **Your Mission:**\n"
-                f"• If FAKE: Convince others it's REAL (get them to trust it)\n"
-                f"• If REAL: Convince others it's FAKE (get them to flag it)\n\n"
-                f"🤫 **Strategy:** Blend in with Truth Seekers while subtly steering the vote wrong\n"
-                f"💰 **Bonus:** +1 RP if majority votes incorrectly!"
-            )
-            
+            if not bot_context:
+                return {"success": False, "message": "Bot context unavailable"}
+
+            # The Scammer can swap the headline only once per game
+            if not hasattr(role, 'has_swapped_headline'):
+                # Fallback safety – should be set in Role class
+                role.has_swapped_headline = False
+
+            if role.has_swapped_headline:
+                await bot_context.bot.send_message(
+                    chat_id=user_id,
+                    text=(
+                        "😈 **HEADLINE SWAP**\n\n"
+                        "❌ You have already used your headline-swap ability this game."
+                    )
+                )
+                return {"success": False, "message": "Headline swap already used"}
+
+            # --- Perform the headline swap ---
+            # Fetch a new random headline (same helper used at round start)
+            new_headline = await self.get_random_headline()
+
+            if not new_headline:
+                await bot_context.bot.send_message(
+                    chat_id=user_id,
+                    text=(
+                        "😈 **HEADLINE SWAP FAILED**\n\n"
+                        "No alternative headline could be found. Try again later."
+                    )
+                )
+                return {"success": False, "message": "No headlines available to swap"}
+
+            # Update game session with new headline and reset votes
+            game_session["current_headline"] = {
+                "id": new_headline.id,
+                "text": new_headline.text,
+                "is_real": new_headline.is_real,
+                "source": new_headline.source,
+                "explanation": new_headline.explanation
+            }
+
+            # Clear any existing votes – players must vote on the new headline
+            game_session["votes"] = {}
+
+            # Queue notification for group chat to present the new headline
+            game_session.setdefault("pending_notifications", []).append({
+                "type": "headline_voting",
+                "headline": {
+                    "id": new_headline.id,
+                    "text": new_headline.text,
+                    "source": new_headline.source,
+                    "is_real": new_headline.is_real,
+                    "explanation": new_headline.explanation
+                },
+                "message": "📰 The headline has mysteriously changed! Read carefully and vote again!"
+            })
+
+            # Mark ability as used
+            role.has_swapped_headline = True
+
+            # Inform the Scammer privately
             await bot_context.bot.send_message(
                 chat_id=user_id,
-                text=scammer_message
+                text=(
+                    "😈 **HEADLINE SWAP SUCCESSFUL**\n\n"
+                    "You replaced the current headline with a new one."
+                    " Players will now discuss and vote on it."
+                )
             )
-            
-            return {"success": True, "message": "Scammer intel sent"}
-            
+
+            return {"success": True, "message": "Headline swapped successfully"}
+
         except Exception as e:
             logger.error(f"Failed to activate scammer ability: {e}")
-            return {"success": False, "message": "Failed to get scammer intel"}
+            return {"success": False, "message": "Failed to use headline swap"}
     
     def _is_player_shadow_banned(self, game_session: Dict, user_id: int) -> bool:
         """Check if player is currently shadow banned."""
@@ -2748,6 +2845,15 @@ class TruthWarsManager:
             # Determine outcome
             if len(top_targets) == 1:
                 target_id = top_targets[0]
+                # === NEW: enforce elimination cap ===
+                if game_session.get("eliminations_total", 0) >= game_session.get("elimination_limit", 999):
+                    await bot_context.bot.send_message(
+                        chat_id=game_session["chat_id"],
+                        text="🚫 Elimination cap reached – vote result ignored this round."
+                    )
+                    logger.info("Elimination cap reached – vote ignored")
+                    game_session["player_votes"] = {}
+                    return
                 username = game_session["players"].get(target_id, {}).get("username", str(target_id))
                 await self._apply_shadow_ban(game_session, target_id, rounds=99)
                 await bot_context.bot.send_message(

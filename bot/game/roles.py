@@ -206,6 +206,8 @@ class Scammer(Role):
         super().__init__(RoleType.SCAMMER, "misinformers")
         # v3: Scammer no longer has snipe ability
         self.snipe_ability = False
+        # New: one-time headline swap ability
+        self.has_swapped_headline: bool = False
         
     @property
     def name(self) -> str:
@@ -220,9 +222,9 @@ class Scammer(Role):
             "• Target the Fact Checker with your snipe\n\n"
             "🔍 **Special Abilities:**\n"
             "• You know which headlines are REAL or FAKE\n"
-            "• One-time **SNIPE** ability to shadow ban suspected Fact Checker\n"
+            "• One-time **HEADLINE SWAP** ability – replace the current headline with a new random one (use wisely!)\n"
             "• +1 RP bonus when majority votes incorrectly\n\n"
-            "⚠️ **Risk**: If you snipe the wrong person, YOU get shadow banned!\n\n"
+            "⚠️ **Risk**: Swapping the headline may backfire if the new headline benefits the Truth Seekers!\n\n"
             "🏆 **You win when**: 3 fake headlines are trusted by majority"
         )
     
@@ -234,12 +236,12 @@ class Scammer(Role):
         abilities = [
             "Know which headlines are REAL or FAKE",
             "Manipulate others into trusting fake headlines",
-            "One-time SNIPE ability to shadow ban suspected Fact Checker"
+            "One-time HEADLINE SWAP ability to replace the current headline"
         ]
-        if not self.has_used_snipe:
-            abilities.append("SNIPE ability available")
+        if not self.has_swapped_headline:
+            abilities.append("HEADLINE SWAP available (unused)")
         else:
-            abilities.append("SNIPE ability used")
+            abilities.append("HEADLINE SWAP used")
         return abilities
     
     def _execute_snipe(self, target_user_id: int, game_state: Dict, sniper_id: int) -> Dict[str, Any]:
