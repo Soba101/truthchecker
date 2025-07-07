@@ -1,247 +1,325 @@
-# Telegram Bot Game - Technical Architecture
+# Truth Wars Telegram Bot - Technical Architecture
 
 ## Overview
 
-This document outlines the technical architecture of the Telegram bot game system. The architecture follows clean code principles with clear separation of concerns and modular design.
+This document outlines the technical architecture of the Truth Wars Telegram bot - an educational social deduction game that teaches media literacy through gameplay. The bot implements a sophisticated 5-round game system with reputation tracking, role-based abilities, and shadow ban mechanics.
 
 ## High-Level Architecture
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Telegram API  │    │   Bot Server    │    │    Database     │
-│                 │────│                 │────│                 │
-│  - Webhooks     │    │ - Handlers      │    │ - User Data     │
-│  - Commands     │    │ - Game Logic    │    │ - Game State    │
-│  - Messages     │    │ - State Mgmt    │    │ - Statistics    │
+│   Telegram API  │    │   Truth Wars    │    │    Database     │
+│                 │────│      Bot        │────│                 │
+│  - Commands     │    │ - Game Manager  │    │ - Game State    │
+│  - Callbacks    │    │ - Role System   │    │ - Player Data   │
+│  - Messages     │    │ - State Machine │    │ - Reputation    │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
 ```
 
-## Component Architecture
+## Core Game Architecture
 
-### 1. Bot Layer (`bot/`)
+### 1. Truth Wars Game System
 
-#### Main Entry Point (`main.py`)
-- Application startup and configuration
-- Bot instance initialization
-- Handler registration
-- Graceful shutdown handling
+#### Game Manager (`truth_wars_manager.py`)
+- **Central orchestrator** for all game sessions
+- Manages game lifecycle from lobby to completion
+- Handles player actions and state transitions
+- Implements win condition logic and scoring
+- Coordinates between database, roles, and bot interface
 
-#### Handlers (`handlers/`)
-- **Command Handlers**: Process bot commands (/start, /help, /play, etc.)
-- **Message Handlers**: Handle text messages and user inputs
-- **Callback Handlers**: Process inline keyboard callbacks
-- **Error Handlers**: Manage exceptions and error responses
+#### Game State Machine (`refined_game_states.py`)
+- **Phase-based game progression** through 7 distinct phases:
+  1. **LOBBY** - Player joining and game setup
+  2. **ROLE_ASSIGNMENT** - Secret role distribution
+  3. **HEADLINE_REVEAL** - News headline presentation
+  4. **DISCUSSION** - Player debate and analysis (2 minutes)
+  5. **VOTING** - Trust/Flag voting on headlines
+  6. **SNIPE_OPPORTUNITY** - Special ability usage (rounds 1-4)
+  7. **ROUND_RESULTS** - Resolution and educational content
 
-#### Game Engine (`game/`)
-- **Game Manager**: Orchestrates game sessions and player interactions
-- **Game State**: Manages current game state and transitions
-- **Game Rules**: Implements specific game logic and validation
-- **Player Management**: Handles player actions and scoring
+#### Role System (`roles.py`)
+- **Dynamic role assignments** based on player count
+- **5-6 Players**: Fact Checker, Scammer, Drunk, Normies
+- **7+ Players**: Fact Checker, 2x Scammers, Influencer, Drunk, Normies
+- **Special abilities**: Snipe powers, double voting, educational content
+- **Faction-based gameplay**: Truth Seekers vs Misinformers
 
-#### Database Layer (`database/`)
-- **Models**: SQLAlchemy ORM models for data entities
-- **Repository Pattern**: Data access layer abstraction
-- **Migrations**: Database schema versioning
-- **Connection Management**: Database connection pooling
-
-#### Utilities (`utils/`)
-- **Configuration**: Environment and settings management
-- **Logging**: Structured logging setup
-- **Validators**: Input validation functions
-- **Helpers**: Common utility functions
-
-### 2. Configuration (`config/`)
-- Environment-specific settings
-- Database configuration
-- Bot token and API settings
-- Game configuration parameters
-
-### 3. Tests (`tests/`)
-- Unit tests for all components
-- Integration tests for bot workflows
-- Game logic testing
-- Database operation tests
-
-## Data Flow
-
-### 1. User Command Processing
-```
-User → Telegram → Bot Handler → Game Manager → Database
-                     ↓
-User ← Telegram ← Bot Response ← Game State ← Database
-```
-
-### 2. Game Session Flow
-```
-1. User sends /play command
-2. Command handler validates user
-3. Game manager creates/joins game session
-4. Game state initialized/updated in database
-5. Bot sends game interface to user
-6. User interactions update game state
-7. Game results saved and communicated
-```
-
-## Database Schema
+## 2. Database Architecture
 
 ### Core Tables
 
-#### Users
+#### **games** - Game Session Management
 ```sql
-CREATE TABLE users (
-    id BIGINT PRIMARY KEY,              -- Telegram user ID
-    username VARCHAR(255),              -- Telegram username
-    first_name VARCHAR(255),            -- User's first name
-    created_at TIMESTAMP DEFAULT NOW(), -- Registration timestamp
-    is_active BOOLEAN DEFAULT true,     -- Account status
-    total_games INTEGER DEFAULT 0,      -- Games played counter
-    total_score INTEGER DEFAULT 0       -- Cumulative score
-);
+id (UUID Primary Key)
+game_type (VARCHAR) -- Always "truth_wars"
+chat_id (BIGINT) -- Telegram chat ID
+status (ENUM) -- waiting, active, completed
+current_round (INT) -- Current round (1-5)
+created_at, started_at, completed_at (TIMESTAMP)
+winning_faction (ENUM) -- truth_team, scammer_team
 ```
 
-#### Games
+#### **game_players** - Player Participation
 ```sql
-CREATE TABLE games (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    game_type VARCHAR(50) NOT NULL,     -- Type of game
-    status VARCHAR(20) DEFAULT 'waiting', -- waiting, active, completed
-    created_at TIMESTAMP DEFAULT NOW(),
-    started_at TIMESTAMP,
-    completed_at TIMESTAMP,
-    max_players INTEGER DEFAULT 1,      -- Maximum players allowed
-    settings JSONB                       -- Game-specific settings
-);
+id (UUID Primary Key)
+game_id (Foreign Key)
+user_id (BIGINT) -- Telegram user ID
+current_reputation (INT) -- Current RP (0-3+)
+is_ghost_viewer (BOOLEAN) -- 0 RP status
+is_shadow_banned (BOOLEAN) -- Current shadow ban
+is_active (BOOLEAN) -- Still in game
 ```
 
-#### Game Players
+#### **truth_wars_games** - Game-Specific Data
 ```sql
-CREATE TABLE game_players (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    game_id UUID REFERENCES games(id),
-    user_id BIGINT REFERENCES users(id),
-    joined_at TIMESTAMP DEFAULT NOW(),
-    score INTEGER DEFAULT 0,
-    is_winner BOOLEAN DEFAULT false,
-    player_data JSONB                    -- Player-specific game data
-);
+game_id (Foreign Key)
+current_phase (ENUM) -- Current game phase
+truth_score (INT) -- Truth Team points (0-3)
+scam_score (INT) -- Scammer Team points (0-3)
+discussion_duration (INT) -- Phase timing
+snipes_available_this_round (BOOLEAN)
 ```
 
-#### Game States
+#### **player_roles** - Role Assignment
 ```sql
-CREATE TABLE game_states (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    game_id UUID REFERENCES games(id),
-    state_data JSONB NOT NULL,          -- Current game state
-    turn_number INTEGER DEFAULT 1,      -- Current turn
-    current_player_id BIGINT,           -- Active player
-    updated_at TIMESTAMP DEFAULT NOW()
-);
+id (UUID Primary Key)
+game_player_id (Foreign Key)
+role_name (VARCHAR) -- fact_checker, scammer, influencer, drunk, normie
+faction (ENUM) -- truth_team, scammer_team
+snipe_ability_used_rounds (JSON) -- Track ability usage
 ```
 
-## State Management
+### Educational & Analytics Tables
 
-### Game State Pattern
-- **State Interface**: Defines common state operations
-- **Concrete States**: Implement specific game phases
-- **State Transitions**: Managed by game engine
-- **Persistence**: All states saved to database
+#### **headlines** - News Content Database
+```sql
+id (UUID Primary Key)
+text (TEXT) -- The headline text
+is_real (BOOLEAN) -- True for real news
+difficulty (ENUM) -- easy, medium, hard
+explanation (TEXT) -- Educational content
+fact_check_url (VARCHAR) -- Verification source
+```
 
-### User Session Management
-- **Conversation States**: Track user's current bot interaction
-- **Context Data**: Store temporary user input and selections
-- **Session Timeout**: Automatic cleanup of idle sessions
+#### **headline_votes** - Trust/Flag Voting
+```sql
+id (UUID Primary Key)
+game_id, user_id, headline_id (Foreign Keys)
+vote (ENUM) -- trust, flag
+is_correct (BOOLEAN) -- Whether vote was right
+vote_weight (INT) -- 2 for Influencer, 1 for others
+round_number (INT) -- When vote was cast
+```
 
-## Security Considerations
+#### **snipe_actions** - Shadow Ban System
+```sql
+id (UUID Primary Key)
+game_id, sniper_id, target_id (Foreign Keys)
+round_number (INT) -- When snipe was used
+snipe_result (ENUM) -- success, failed, self_ban
+target_shadow_banned (BOOLEAN) -- Result
+```
 
-### Input Validation
-- All user inputs validated before processing
-- Command parameter sanitization
-- SQL injection prevention through ORM
+## 3. Bot Interface Architecture
 
-### Rate Limiting
-- Per-user command rate limiting
-- Game action frequency limits
-- Database query optimization
+### Command Handlers (`handlers/command_handlers.py`)
+- **`/start`** - Welcome and bot introduction
+- **`/help`** - Complete game guide and instructions
+- **`/stats`** - Personal game statistics and progress
+- **`/leaderboard`** - Top players by wins/accuracy
+- **`/play`** - Game selection menu
 
-### Data Protection
-- User data encryption at rest
-- Secure bot token management
-- Audit logging for sensitive operations
+### Truth Wars Handlers (`handlers/truth_wars_handlers.py`)
+- **`/truthwars`** - Create new game lobby (group chats only)
+- **`/status`** - Check current game phase and progress
+- **`/ability`** - View role info and use special abilities
+- **`/vote`** - Vote to eliminate players during elimination phase
 
-## Performance Optimizations
+### Message Handlers (`handlers/message_handlers.py`)
+- **Shadow ban enforcement** - Automatically delete messages from banned players
+- **Custom keyboard handling** - Process menu button presses
+- **Educational discussions** - Allow free-form chat during discussion phases
+
+### Callback Handlers
+- **Join/Start game buttons** - Lobby management
+- **Trust/Flag voting** - Headline evaluation interface
+- **Snipe targeting** - Special ability usage
+- **Continue game** - Round progression
+
+## 4. Game Flow Architecture
+
+### Round Structure (5 Rounds Total)
+
+#### 1. **Headline Reveal Phase** (30 seconds)
+- AI-generated or curated headline presented
+- Difficulty progression: Easy → Medium → Hard
+- Educational context provided
+
+#### 2. **Discussion Phase** (2 minutes)
+- Players debate headline authenticity
+- Fact Checker gets special information (except 1 blind round)
+- Drunk player shares media literacy tips
+- Shadow banned players cannot speak
+
+#### 3. **Voting Phase** (45 seconds)
+- Trust/Flag buttons for each player
+- Influencer votes count as 2 votes
+- Ghost Viewers (0 RP) can still vote
+- Real-time vote tallying
+
+#### 4. **Snipe Phase** (30 seconds, rounds 1-4)
+- Fact Checkers and Scammers can use snipe abilities
+- Target elimination or self-shadow ban
+- Strategic ability usage
+
+#### 5. **Resolution Phase** (30 seconds)
+- Reveal headline truth and voting results
+- Update player reputations (+1 correct, -1 incorrect)
+- Educational explanation and fact-checking tips
+- Team scoring: Truth/Scam teams get points
+
+### Win Conditions
+1. **First to 3 Points**: Truth Team or Scammer Team reaches 3 points
+2. **5 Rounds Complete**: Highest total faction RP wins
+3. **All Opposition Eliminated**: Via shadow bans and 0 RP
+
+## 5. Reputation System Architecture
+
+### 3 RP Starting System
+- All players start with **3 Reputation Points**
+- **Correct votes**: +1 RP (max varies by game state)
+- **Incorrect votes**: -1 RP (minimum 0)
+- **0 RP = Ghost Viewer**: Can vote but cannot speak
+
+### Special RP Mechanics
+- **Scammer bonus**: +1 RP when fake headlines are trusted
+- **Influencer weight**: Votes count as 2 points
+- **Shadow ban immunity**: 0 RP players cannot be shadow banned
+
+## 6. Shadow Ban System Architecture
+
+### Snipe Abilities
+- **Available rounds**: 1, 2, 3, 4 (not round 5)
+- **Fact Checker snipe**: Target suspected Scammers
+- **Scammer snipe**: Target suspected Fact Checkers
+- **Consequences**: Successful = target shadow banned, Failed = self shadow banned
+
+### Shadow Ban Effects
+- **Cannot speak** during discussion phases
+- **Can still vote** on headlines
+- **Duration**: 1 round (may be extended)
+- **Visual feedback**: Messages automatically deleted
+
+## 7. Educational Features Architecture
+
+### Drunk Role Rotation
+- **Rotates among Normies** each round
+- **Provides media literacy tips** during discussion
+- **Encourages learning** through peer teaching
+- **Tracks educational effectiveness**
+
+### Fact-Checking Integration
+- **Real headlines** from credible sources
+- **Fake headlines** with common red flags
+- **Detailed explanations** after each vote
+- **Verification techniques** teaching
+- **Source credibility** education
+
+## 8. Performance & Scalability
 
 ### Database Optimization
-- Proper indexing on frequently queried columns
-- Connection pooling for concurrent requests
-- Query result caching where appropriate
+- **Indexed queries** on game_id, user_id, round_number
+- **Connection pooling** via AsyncSession
+- **Efficient state updates** with minimal queries
+- **Cleanup routines** for completed games
 
 ### Bot Response Optimization
-- Asynchronous message handling
-- Batch operations for multiple users
-- Efficient state serialization
+- **Async handlers** for concurrent game management
+- **Efficient message routing** based on chat context
+- **Cached game state** in memory for active games
+- **Batch operations** for multi-player updates
 
 ### Memory Management
-- Game state cleanup after completion
-- Periodic cache clearing
-- Connection resource management
+- **Active games dictionary** for fast access
+- **Automatic cleanup** on game completion
+- **Periodic garbage collection** of old game data
+- **Resource limits** on concurrent games
 
-## Error Handling Strategy
+## 9. Error Handling & Monitoring
 
-### Error Categories
-1. **User Errors**: Invalid commands, wrong game moves
-2. **System Errors**: Database failures, API timeouts
-3. **Game Errors**: Invalid game states, logic errors
-
-### Error Responses
-- User-friendly error messages
-- Automatic error recovery where possible
-- Detailed logging for debugging
-
-### Fallback Mechanisms
-- Graceful degradation for non-critical features
-- Default responses for unhandled situations
-- Manual intervention capabilities for admins
-
-## Monitoring and Logging
-
-### Metrics Collection
-- Response time tracking
-- User engagement metrics
-- Error rate monitoring
-- Database performance metrics
+### Comprehensive Error Handling
+- **Telegram API errors** (rate limits, blocked users)
+- **Database connection issues** with retry logic
+- **Game state corruption** recovery
+- **User input validation** and sanitization
 
 ### Logging Strategy
-- Structured JSON logging
-- Different log levels for different environments
-- Audit trail for game actions
-- Performance profiling data
+- **Structured logging** with user/game context
+- **Game events tracking** for analytics
+- **Performance monitoring** of phase transitions
+- **Error reporting** with stack traces
 
-## Deployment Architecture
+## 10. Security Considerations
 
-### Development Environment
-- SQLite database for simplicity
-- Local bot testing with ngrok
-- Hot reload for development
+### Input Validation
+- **Command parameter sanitization**
+- **SQL injection prevention** via ORM
+- **User permission checks** for game actions
+- **Rate limiting** on command usage
 
-### Production Environment
-- PostgreSQL database with backups
-- Webhook-based bot deployment
-- Load balancing for high availability
-- Monitoring and alerting systems
+### Data Protection
+- **User privacy** - minimal data collection
+- **Secure token management** for bot authentication
+- **Audit trails** for administrative actions
+- **GDPR compliance** considerations
 
-## Future Scalability
+## 11. Development Architecture
 
-### Horizontal Scaling
-- Stateless handler design
-- Database sharding strategies
-- Microservice decomposition potential
+### Code Organization
+```
+bot/
+├── main.py                    # Bot entry point and setup
+├── handlers/                  # Telegram command/message handlers
+│   ├── command_handlers.py
+│   ├── truth_wars_handlers.py
+│   └── message_handlers.py
+├── game/                      # Game logic and state management
+│   ├── truth_wars_manager.py
+│   ├── refined_game_states.py
+│   └── roles.py
+├── database/                  # Data persistence layer
+│   ├── models.py
+│   ├── database.py
+│   └── seed_data.py
+├── ai/                        # Content generation
+│   └── headline_generator.py
+└── utils/                     # Shared utilities
+    ├── config.py
+    └── logging_config.py
+```
+
+### Testing Strategy
+- **Unit tests** for game logic components
+- **Integration tests** for database operations
+- **Game flow tests** simulating complete sessions
+- **Performance tests** for concurrent game handling
+
+## 12. Future Scalability
+
+### Horizontal Scaling Potential
+- **Stateless handler design** enables multiple bot instances
+- **Database sharding** by chat_id for large deployments
+- **Redis caching** for cross-instance game state
+- **Load balancing** for high-volume chats
 
 ### Feature Extensibility
-- Plugin architecture for new games
-- Configurable game rules
-- Multi-language support framework
+- **Plugin architecture** for new game modes
+- **Configurable game parameters** via admin interface
+- **Multi-language support** framework
+- **Advanced analytics** and reporting
 
 ---
 
-**Last Updated**: [Date]
-**Version**: 1.0 
+**Last Updated**: December 2024
+**Version**: 3.0 - Truth Wars Refined Implementation
+**Architecture**: Specialized Educational Social Deduction Game Bot 

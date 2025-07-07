@@ -213,7 +213,3 @@ DATABASE_URL=postgresql+asyncpg://user:password@localhost/gamebot
 3. Document in relevant docs
 
 ---
-
-**🎉 You're ready to start developing your Telegram bot game!**
-
-For detailed planning and architecture information, see the documentation in the `docs/` folder. 
