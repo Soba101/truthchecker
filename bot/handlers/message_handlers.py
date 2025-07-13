@@ -68,6 +68,12 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             text="""
 📚 **How to Play Truth Wars**
 
+👥 **Roles & Powers**
+🧠 *Fact Checker* – Gets insider info (up to 3 peeks) and one-time **SNIPE**
+😈 *Scammer* – Already knows real/fake and tries to mislead the group
+🎭 *Influencer* – Your vote counts as **2** instead of 1
+🧍 *Normie* – No powers, rely on critical thinking!
+
 🔵 Truth Seekers – expose misinformers  
 🔴 Misinformers – avoid detection
 

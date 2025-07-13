@@ -142,7 +142,8 @@ class TruthWarsManager:
                 # === NEW: elimination cap tracking ===
                 "elimination_limit": None,   # Will be set once game starts
                 "eliminations_total": 0,     # Count of all shadow bans (vote or snipe)
-                "snipe_used_this_round": False  # Reset each round
+                "snipe_used_this_round": False,  # Reset each round
+                "snipe_op_msg_sent_round": None,  # Track round when snipe message was sent
             }
             
             # === NEW: set elimination cap based on player count ===
@@ -311,9 +312,6 @@ class TruthWarsManager:
                         session.add(player_role)
                 
                 await session.commit()
-            
-            # Initialize drunk rotation system
-            self._initialize_drunk_rotation(game_session)
             
             # Initialize fact checker balance (one round without info)
             self._initialize_fact_checker_balance(game_session)
@@ -809,14 +807,11 @@ class TruthWarsManager:
         # Calculate elimination limit if not already set (handles cases where it was 0 during lobby)
         if game_session.get("elimination_limit") in (None, 0):
             game_session["elimination_limit"] = max(0, len(game_session["players"]) - 2)
-        
         # Reduce shadow ban durations at start of new round
         if current_round > 1:
             self._reduce_shadow_ban_durations(game_session)
         
-        # Rotate drunk role to next normie (if not round 1)
-        if current_round > 1:
-            await self._rotate_drunk_role(game_session)
+        # Drunk role removed – no rotation
         
         # v3: pop headline from prepared queue first; fallback to generator
         headline_data = None
@@ -840,11 +835,7 @@ class TruthWarsManager:
                 "explanation": headline.explanation
             }
 
-            # === NEW: Provide the Drunk player with inside info immediately ===
-            # Ensure the active Drunk receives the correct answer and teaching tip as soon as
-            # the headline for this round is ready. This keeps the gameplay experience
-            # consistent with the role description ("You know the truth about THIS round's headline").
-            await self._send_drunk_correct_answer(game_session)
+            # Drunk role removed – no inside-info message needed
             
             # Note: Players must use /ability command to activate their special abilities
             # No automatic ability activation
@@ -2276,7 +2267,8 @@ class TruthWarsManager:
             
             # Handle Drunk ability
             elif role.__class__.__name__ == "Drunk":
-                return await self._activate_drunk_ability(game_session, user_id, role)
+                # Drunk role removed – no ability to activate
+                return {"success": False, "message": "Drunk role removed – no ability to activate"}
             
             # Handle Scammer ability (info about headline)
             elif role.__class__.__name__ == "Scammer":
@@ -2657,6 +2649,8 @@ class TruthWarsManager:
                 except Exception as dm_err:
                     logger.error(f"Failed to send DM snipe prompt: {dm_err}")
             logger.info(f"Sent snipe opportunity message for round {current_round}")
+            # Mark as sent for this round so repeated calls are ignored
+            game_session["snipe_op_msg_sent_round"] = current_round
         except Exception as e:
             logger.error(f"Failed to send snipe opportunity message: {e}")
     

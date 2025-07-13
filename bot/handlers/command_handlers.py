@@ -259,7 +259,6 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 'Fact Checker': user_stats.times_as_fact_checker,
                 'Scammer': user_stats.times_as_scammer,
                 'Influencer': user_stats.times_as_influencer,
-                'Drunk': user_stats.times_as_drunk,
                 'Normie': user_stats.times_as_normie
             }
             most_played_role = max(role_counts, key=role_counts.get) if max(role_counts.values()) > 0 else "None yet"

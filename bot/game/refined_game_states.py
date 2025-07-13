@@ -362,8 +362,8 @@ class RefinedGameStateMachine:
         if not player_role or not player_role.can_use_snipe():
             return {"success": False, "message": "You cannot use snipe ability"}
         
-        # Execute snipe through role
-        snipe_result = player_role.use_snipe(target_id, game_state)
+        # Execute snipe through role (include sniper_id for logging/penalties)
+        snipe_result = player_role.use_snipe(target_id, game_state, sniper_id=player_id)
         
         return snipe_result
     

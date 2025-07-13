@@ -20,7 +20,6 @@ Truth Wars is a **5-round social-deduction game** that teaches media-literacy th
 |------|-------|-------------------|
 | 🧠 **Fact Checker** | 1 | • **3 peeks** per game (not consecutive rounds)<br/>• **1 snipe** ability (Rounds 1-4 only) |
 | 😈 **Scammer** | 1 (5-6p) / 2 (7-10p) | • Always knows headline truth<br/>• Tries to mislead majority votes |
-| 🧍 **Drunk** | 1 | • Receives private hint each round<br/>• Rotates if shadow-banned |
 | 🧍 **Misinformed Users** | remaining | • No special powers<br/>• Regular players ("normies") |
 | 🎭 **Influencer** | 1 (7-10p only) | • **Vote counts as 2 votes**<br/>• No other abilities |
 
@@ -256,6 +255,8 @@ See `docs/TRUTH_WARS_ROADMAP.md` for detailed timeline.
 - Classroom integration
 - Advanced difficulty presets
 - Multi-language support
+
+**Note (2025-07):** The *Drunk* role has been deprecated and removed from the implementation. References to it below are historical.
 
 ---
 

@@ -1,5 +1,8 @@
 # 🕵️‍♂️ Truth Wars: Refined Game Design 🕵️‍♀️
 
+# Truth Wars – Version 2 Design Notes
+> **Note (2025-07):** The *Drunk* role mentioned here was removed in later versions and is no longer part of the game.
+
 ## 🎯 **Game Overview**
 Truth Wars is a **media literacy social deduction game** where players evaluate headlines and build reputation while special roles attempt to manipulate the outcome.
 
@@ -8,14 +11,12 @@ Truth Wars is a **media literacy social deduction game** where players evaluate 
 ### **5-6 Players**
 - **🧠 1x Fact Checker** - Truth Seeker with investigation power
 - **😈 1x Scammer** - Misinformer trying to manipulate votes  
-- **🧍 1x "Drunk"** - Rotating role that gets inside info each round
 - **🧍 2-3x Misinformed Users** - Regular players ("normies")
 
 ### **7+ Players** 
 - **🧠 1x Fact Checker** - Truth Seeker with investigation power
 - **😈 2x Scammers** - Multiple misinformers working together
 - **🎭 1x Influencer** - Special role with double vote weight
-- **🧍 1x "Drunk"** - Rotating role that gets inside info each round  
 - **🧍 3+x Misinformed Users** - Regular players ("normies")
 
 ## 🎮 **Game Mechanics**
@@ -300,10 +301,7 @@ Sam checks the claim → **FAKE**. He reveals the truth to warn others.
 - Can single-handedly decide outcomes
 - **Solution**: Scale vote weight by group size (1.5x in small groups)
 
-**Issue**: "Drunk" role rotation breaks with insufficient normies
-- Simulation shows no normies available for rotation
-- Role becomes meaningless or causes errors
-- **Solution**: Allow any non-special role to be "drunk" or remove rotation
+// [CHANGE: July 2025] All references to the Drunk role above this line have been removed or clarified. The Drunk role is deprecated and not part of current gameplay. Historical notes and design issues below are for reference only.
 
 #### **3. Win Condition Logic Flaws**
 **Issue**: Win conditions assume balanced headline distribution

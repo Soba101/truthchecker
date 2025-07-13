@@ -728,6 +728,19 @@ async def handle_flag_vote(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 async def send_headline_voting(context: ContextTypes.DEFAULT_TYPE, game_id: str, headline: Dict) -> None:
     """Send a headline with Trust/Flag voting buttons to the chat."""
     try:
+        # ---- Duplicate-send guard ---------------------------------------------------
+        # If this headline was already sent for this round, skip to avoid duplicates.
+        game_session = truth_wars_manager.active_games.get(game_id)
+        if game_session is not None:
+            last_sent_id = game_session.get("last_headline_sent_id")
+            if last_sent_id == headline.get("id"):
+                logger.debug(
+                    f"Duplicate headline voting message suppressed for game {game_id} – id {last_sent_id} already sent"
+                )
+                return  # Exit early – message already sent this round
+
+        # ---------------------------------------------------------------------------
+
         # Get game session to find chat ID
         if game_id not in truth_wars_manager.active_games:
             logger.error(f"Cannot send headline - game {game_id} not found")
@@ -768,7 +781,11 @@ async def send_headline_voting(context: ContextTypes.DEFAULT_TYPE, game_id: str,
             reply_markup=reply_markup,
             parse_mode='Markdown'
         )
-        
+
+        # Record that we've sent this headline so duplicates are suppressed next time
+        if game_session is not None:
+            game_session["last_headline_sent_id"] = headline.get("id")
+
         logger.info(f"Headline sent to chat {chat_id} for game {game_id}")
         
     except Exception as e:
@@ -1065,9 +1082,12 @@ async def handle_swap_headline_callback(update: Update, context: ContextTypes.DE
         await query.edit_message_text(text="Invalid action or game not found.")
         return
 
-    player_role = game_session["player_roles"].get(user_id)
+    # Retrieve the player's Role object safely
+    role_info = game_session["player_roles"].get(user_id, {})
+    role = role_info.get("role")
 
-    if not player_role or player_role.role_type != RoleType.SCAMMER:
+    # If the user is not the Scammer, they cannot perform a headline swap
+    if not role or role.role_type != RoleType.SCAMMER:
         await query.edit_message_text(text="You are not the Scammer.")
         return
 
