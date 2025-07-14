@@ -1,5 +1,7 @@
 # 🗂️ Truth Wars – Project Documentation
 
+> **Note (2025-07):** The *Drunk* role has been deprecated and removed from gameplay. Any references below are for historical context only and do not reflect current gameplay.
+
 Welcome!  This guide explains every moving part of the **Truth Wars Telegram Bot** so a new developer can be productive fast.
 
 ---
@@ -34,7 +36,7 @@ Truth Wars is a **5-round social-deduction game** that teaches media-literacy th
 **Win Conditions:** First team to 3 points OR all Scammers shadow-banned.
 
 ### Round Structure (5 rounds max)
-1. **Headline Reveal** + Drunk gets private hint
+1. **Headline Reveal**
 2. **Discussion Phase** (3 min) + optional Fact Checker peek
 3. **Trust/Flag Vote** (with Influencer 2x weight)
 4. **Fact Checker Snipe** (Rounds 1-4 only)

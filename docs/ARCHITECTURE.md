@@ -1,5 +1,7 @@
 # Truth Wars Telegram Bot - Technical Architecture
 
+> **Note (2025-07):** The *Drunk* role has been removed from gameplay. Any references below are for historical context only and do not reflect current gameplay.
+
 ## Overview
 
 This document outlines the technical architecture of the Truth Wars Telegram bot - an educational social deduction game that teaches media literacy through gameplay. The bot implements a sophisticated 5-round game system with reputation tracking, role-based abilities, and shadow ban mechanics.
@@ -158,7 +160,7 @@ target_shadow_banned (BOOLEAN) -- Result
 #### 2. **Discussion Phase** (2 minutes)
 - Players debate headline authenticity
 - Fact Checker gets special information (except 1 blind round)
-- Drunk player shares media literacy tips
+- [Historical: Drunk player shares media literacy tips]
 - Shadow banned players cannot speak
 
 #### 3. **Voting Phase** (45 seconds)

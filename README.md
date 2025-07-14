@@ -1,5 +1,7 @@
 # Truth Wars - Educational Telegram Bot Game
 
+> **Note (2025-07):** The *Drunk* role has been deprecated and removed from gameplay. Any references below are for historical context only and do not reflect current gameplay.
+
 A sophisticated Telegram bot implementing the "Truth Wars" game - an educational multiplayer social deduction experience that teaches media literacy through interactive gameplay. Players vote on headlines to determine if they're real or fake while taking on special roles with unique abilities in a strategic battle between Truth Seekers and Misinformers.
 
 ## 🎮 Game Overview
@@ -11,9 +13,9 @@ Truth Wars combines social deduction with media literacy education in an engagin
 - **Dynamic reputation system** starting with 3 RP, becoming Ghost Viewer at 0 RP
 - **Role-based gameplay** with strategic abilities:
   - **Fact Checker** (Truth Team) - Gets insider info, can snipe suspected Scammers
-  - **Scammer** (Misinformation Team) - Spreads doubt, can snipe suspected Fact Checkers  
-  - **Influencer** (Truth Team) - Double-weighted votes (2x voting power)
-  - **Normies** (Various Teams) - Standard players, learn through gameplay
+  - **Scammer** (Misinformation Team) - Spreads doubt, manipulates votes
+  - **Influencer** (Truth Team, 7+ players) - Double-weighted votes (2x voting power)
+  - **Normies** (Truth Team) - Standard players, learn through gameplay
 - **Snipe abilities** for strategic shadow banning (Rounds 1-4 only)
 - **Educational content** seamlessly integrated through gameplay mechanics
 - **Win conditions**: First faction to 3 points OR highest combined reputation after 5 rounds
@@ -24,7 +26,7 @@ Truth Wars combines social deduction with media literacy education in an engagin
 - **Real-world headlines** from credible news sources
 - **Carefully crafted fake news** with common misinformation patterns
 - **Detailed explanations** after each vote revealing truth and teaching detection techniques
-- **Media literacy concepts** taught through the rotating Drunk role
+- **Media literacy concepts** taught through gameplay and post-round explanations
 - **Progressive difficulty** from easy to hard headlines across 5 rounds
 
 ### 🏆 **Reputation System**
@@ -36,9 +38,9 @@ Truth Wars combines social deduction with media literacy education in an engagin
 ### 🎭 **Role-Based Strategy**
 - **Faction warfare** between Truth Seekers and Misinformers
 - **One-time snipe abilities** (Rounds 1-4) create high-stakes tactical moments
-- **Educational role rotation** - Drunk role rotates among Normies for peer teaching
-- **Influencer mechanics** - Double-weighted votes can swing close decisions
+- **Influencer mechanics** - Double-weighted votes can swing close decisions (7+ players)
 - **Blind rounds** - Fact Checker occasionally doesn't get insider information
+- [Historical: Educational role rotation (Drunk role) was used in earlier versions]
 
 ### 📊 **Progress Tracking**
 - **Individual statistics** - Win rates, accuracy, role performance
@@ -177,9 +179,9 @@ CONTENT_MODERATION=true
 - ✅ **Full game implementation** with optimized 5-round structure
 - ✅ **Reputation system** with 3 RP starting points and Ghost Viewer mechanics
 - ✅ **Trust/Flag voting** with weighted votes and accuracy tracking
-- ✅ **Complete role system** with Fact Checker, Scammer, Influencer, Drunk, Normie
+- ✅ **Complete role system** with Fact Checker, Scammer, Influencer, Normie
 - ✅ **Snipe mechanics** for strategic shadow banning (Rounds 1-4)
-- ✅ **Educational content delivery** via rotating Drunk role with media literacy tips
+- ✅ **Educational content delivery** via post-round explanations and gameplay (Drunk role deprecated)
 - ✅ **Comprehensive statistics** tracking individual and game performance
 - ✅ **Database schema** with complete relationship mapping and analytics support
 - ✅ **Error handling** and recovery mechanisms for robust gameplay
