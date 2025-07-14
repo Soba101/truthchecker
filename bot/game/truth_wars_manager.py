@@ -126,13 +126,6 @@ class TruthWarsManager:
                     "scam": 0
                 },
                 
-                # Drunk role rotation tracking
-                "drunk_rotation": {
-                    "current_drunk_id": None,      # Currently drunk player
-                    "normie_ids": [],              # List of normie player IDs for rotation
-                    "rotation_index": 0            # Current position in rotation
-                },
-                
                 # Fact Checker balance - one round without info
                 "fact_checker_no_info_round": None,  # Will be set to random round 1-5
                 
@@ -769,20 +762,19 @@ class TruthWarsManager:
         if current_round > 1:
             self._reduce_shadow_ban_durations(game_session)
         
-        # Drunk role removed – no rotation
+        # Always try to get a headline using the AI-vs-database logic first
+        headline = await self.get_random_headline()
         
-        # v3: pop headline from prepared queue first; fallback to generator
-        headline_data = None
-        queue = game_session.get("headline_queue", [])
-        if queue:
-            headline_data = queue.pop(0)
-            # If we popped a raw Headline object previously stored, keep object format consistent
-            if isinstance(headline_data, dict):
-                headline = headline_data["obj"]
-            else:
-                headline = headline_data
-        else:
-            headline = await self.get_random_headline()
+        # If that fails, fallback to the queue (if available)
+        if not headline:
+            queue = game_session.get("headline_queue", [])
+            if queue:
+                headline_data = queue.pop(0)
+                # If we popped a raw Headline object previously stored, keep object format consistent
+                if isinstance(headline_data, dict):
+                    headline = headline_data["obj"]
+                else:
+                    headline = headline_data
         
         if headline:
             game_session["current_headline"] = {
@@ -792,7 +784,6 @@ class TruthWarsManager:
                 "source": headline.source,
                 "explanation": headline.explanation
             }
-
 
         # --- NEW: Notify all scammers of headline authenticity ---
             # This ensures scammers always know if the headline is real or fake.

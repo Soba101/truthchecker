@@ -55,35 +55,28 @@ class HeadlineGenerator:
     ) -> Optional[Dict[str, Any]]:
         """
         Generate a realistic headline using AI.
-        
-        Args:
-            difficulty: Difficulty level ("easy", "medium", "hard")
-            category: Category of news ("general", "health", "politics", "technology")
-            is_real: Whether to generate real or fake news (None = random)
-            
-        Returns:
-            Dict with headline data or None if generation fails
+        Always uses 'hard' difficulty for maximum challenge.
+        Always generates headlines about any topic (not limited to a category).
         """
         if not self.is_available():
             logger.debug("AI headline generation not available")
             return None
-        
+        # Always use hard difficulty for maximum challenge
+        difficulty = "hard"
+        # Always use 'any' category for maximum variety
+        category = "any"
         # Randomly determine if headline should be real or fake
         if is_real is None:
             is_real = random.choice([True, False])
-        
         try:
             # Generate the headline text
             headline_text = await self._generate_headline_text(difficulty, category, is_real)
             if not headline_text:
                 return None
-            
             # Generate educational explanation
             explanation = await self._generate_explanation(headline_text, is_real, difficulty)
-            
             # Generate source attribution
             source = self._generate_source_attribution(is_real, category)
-            
             return {
                 "text": headline_text,
                 "is_real": is_real,
@@ -93,7 +86,6 @@ class HeadlineGenerator:
                 "difficulty": difficulty,
                 "ai_generated": True
             }
-            
         except Exception as e:
             logger.error(f"Failed to generate AI headline: {e}")
             return None
@@ -104,42 +96,15 @@ class HeadlineGenerator:
         category: str, 
         is_real: bool
     ) -> Optional[str]:
-        """Generate the actual headline text using OpenAI."""
-        
-        # Define difficulty-specific prompts
-        difficulty_prompts = {
-            "easy": {
-                "fake": "obviously fake news that most people can identify as false",
-                "real": "straightforward real news that is clearly factual"
-            },
-            "medium": {
-                "fake": "moderately believable fake news that requires some critical thinking to identify",
-                "real": "real news that might seem surprising but is actually true"
-            },
-            "hard": {
-                "fake": "very sophisticated fake news that's difficult to distinguish from real news",
-                "real": "real news that sounds almost too strange to be true but is factual"
-            }
-        }
-        
-        # Define category contexts
-        category_contexts = {
-            "health": "health, medicine, wellness, or medical research",
-            "politics": "political news, government, or policy",
-            "technology": "technology, science, innovation, or research", 
-            "general": "general news from any topic"
-        }
-        
-        # Build the prompt
-        news_type = "real" if is_real else "fake"
-        difficulty_desc = difficulty_prompts.get(difficulty, difficulty_prompts["medium"])[news_type]
-        category_desc = category_contexts.get(category, category_contexts["general"])
-        
+        """Generate the actual headline text using OpenAI.
+        Always uses a broad, open-ended prompt for any topic.
+        """
+        # Build the prompt (no category context)
         if is_real:
-            prompt = f"""Generate a real, factual news headline about {category_desc}. 
+            prompt = f"""Generate a real, factual news headline about any topic.
             
             Requirements:
-            - Must be {difficulty_desc}
+            - Must be very hard to tell if it's real or fake
             - Actually true and verifiable
             - Realistic news headline format
             - Appropriate for educational media literacy game
@@ -147,17 +112,18 @@ class HeadlineGenerator:
             
             Return ONLY the headline text, nothing else."""
         else:
-            prompt = f"""Generate a fake news headline about {category_desc}. 
+            prompt = f"""Generate a FAKE news headline about any topic.
             
             Requirements:
-            - Must be {difficulty_desc}
-            - Realistic-sounding but completely false
-            - Designed for media literacy education
-            - Should have red flags that critical thinkers could identify
+            - Make it extremely plausible and subtle, so that it is very hard to tell if it is real or fake
+            - Do NOT use satire, humor, or outlandish claims
+            - The headline should sound like something that could genuinely appear in a reputable news outlet
+            - Avoid obvious red flags or giveaways
+            - Should be as realistic as possible, but still completely false
+            - Appropriate for an educational media literacy game
             - Between 8-15 words
             
             Return ONLY the headline text, nothing else."""
-        
         try:
             response = await self.client.chat.completions.create(
                 model="gpt-3.5-turbo",
@@ -166,15 +132,11 @@ class HeadlineGenerator:
                 temperature=0.8,
                 timeout=15.0  # 15 second timeout
             )
-            
             headline_text = response.choices[0].message.content.strip()
-            
             # Clean up the headline (remove quotes if present)
             headline_text = headline_text.strip('"\'')
-            
             logger.info(f"Generated {'real' if is_real else 'fake'} {difficulty} headline: {headline_text[:50]}...")
             return headline_text
-            
         except asyncio.TimeoutError:
             logger.error("OpenAI request timed out")
             return None
@@ -235,27 +197,16 @@ class HeadlineGenerator:
                 return "This headline is fake. Always check sources, look for emotional language, and verify with fact-checking websites."
     
     def _generate_source_attribution(self, is_real: bool, category: str) -> str:
-        """Generate realistic source attribution for the headline."""
-        
-        if is_real:
-            # Real news sources by category
-            real_sources = {
-                "health": ["Mayo Clinic News", "Harvard Health", "WebMD News", "Medical News Today"],
-                "politics": ["Reuters", "Associated Press", "BBC News", "NPR"],
-                "technology": ["TechCrunch", "Wired", "MIT Technology Review", "Science Daily"],
-                "general": ["Reuters", "Associated Press", "BBC News", "NPR", "CNN"]
-            }
-            sources = real_sources.get(category, real_sources["general"])
-        else:
-            # Fake/suspicious source names that sound plausible but aren't real major outlets
-            fake_sources = [
-                "Daily Truth News", "Global Update Network", "Breaking News 24/7",
-                "World Facts Today", "Real Story News", "Truth Central",
-                "Independent News Wire", "Citizens Report", "Freedom News Network"
-            ]
-            sources = fake_sources
-        
-        return f"AI Generated ({random.choice(sources)})"
+        """Generate realistic source attribution for the headline.
+        Picks randomly from all reputable sources, since topic is open.
+        """
+        all_sources = [
+            "Mayo Clinic News", "Harvard Health", "WebMD News", "Medical News Today", "The Lancet", "Nature Medicine", "BMJ", "CDC News",
+            "Reuters", "Associated Press", "BBC News", "NPR", "The Guardian", "New York Times", "Washington Post", "Politico",
+            "TechCrunch", "Wired", "MIT Technology Review", "Science Daily", "The Verge", "Ars Technica", "IEEE Spectrum", "Nature",
+            "CNN", "Wall Street Journal"
+        ]
+        return random.choice(all_sources)
     
     async def generate_batch_headlines(
         self, 

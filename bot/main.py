@@ -179,7 +179,6 @@ class TruthWarsBot:
         logger.info("- Reputation system (3 RP → Ghost Viewer)")
         logger.info("- Trust/Flag voting on headlines")
         logger.info("- Shadow ban mechanics via snipe abilities")
-        logger.info("- Educational content via rotating Drunk role")
         logger.info("- Fixed 5-round game structure")
     
 

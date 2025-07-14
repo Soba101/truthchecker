@@ -106,7 +106,6 @@ class User(Base):
     times_as_fact_checker = Column(Integer, default=0, doc="Times played as Fact Checker")
     times_as_scammer = Column(Integer, default=0, doc="Times played as Scammer")
     times_as_influencer = Column(Integer, default=0, doc="Times played as Influencer")
-    times_as_drunk = Column(Integer, default=0, doc="Times played as Drunk")
     times_as_normie = Column(Integer, default=0, doc="Times played as Normie")
     
     # Snipe system stats
@@ -325,8 +324,6 @@ class TruthWarsGame(Base):
     resolution_duration = Column(Integer, default=30, doc="Resolution viewing time (30 sec)")
     
     # Educational features
-    drunk_rotation_order = Column(JSON, default=list, doc="Order of Drunk role rotation among Normies")
-    current_drunk_player_id = Column(BigInteger, nullable=True, doc="Current player with Drunk role")
     educational_tips_shared = Column(JSON, default=list, doc="Tips shared by Drunk players this game")
     
     # Snipe system tracking (every 2 rounds)
@@ -375,12 +372,8 @@ class PlayerRole(Base):
     game_player_id = Column(String(36), ForeignKey("game_players.id"), nullable=False, doc="Game player ID")
     
     # Role information for refined system
-    role_name = Column(String(50), nullable=False, doc="Role name (fact_checker, scammer, influencer, drunk, normie)")
+    role_name = Column(String(50), nullable=False, doc="Role name (fact_checker, scammer, influencer, normie)")
     faction = Column(Enum(PlayerFaction), nullable=False, doc="Player faction (truth_team, scammer_team)")
-    
-    # Special role attributes
-    is_original_drunk = Column(Boolean, default=False, doc="Whether this was the original Drunk (for rotation)")
-    drunk_rotation_position = Column(Integer, nullable=True, doc="Position in Drunk rotation order")
     
     # Ability tracking for refined system
     snipe_ability_used_rounds = Column(JSON, default=list, doc="Rounds when snipe ability was used")
@@ -396,7 +389,6 @@ class PlayerRole(Base):
     
     # Timestamps
     assigned_at = Column(DateTime, default=func.now(), doc="When role was assigned")
-    became_drunk_at = Column(DateTime, nullable=True, doc="When player became Drunk (for rotation)")
     
     # Relationships
     game_player = relationship("GamePlayer", back_populates="role")
@@ -614,15 +606,10 @@ class RoundResult(Base):
     
     # Educational metrics
     fact_checker_influence = Column(Boolean, default=False, doc="Did Fact Checker info influence outcome?")
-    drunk_tip_shared = Column(Text, nullable=True, doc="Educational tip shared by Drunk this round")
     players_learned_something = Column(JSON, default=list, doc="Players who indicated they learned")
-    
-    # Player performance this round
     players_voted_correctly = Column(JSON, default=list, doc="List of player IDs who voted correctly")
     players_lost_reputation = Column(JSON, default=list, doc="List of player IDs who lost RP")
     new_ghost_viewers = Column(JSON, default=list, doc="Player IDs who became Ghost Viewers")
-    
-    # Timestamps
     round_started_at = Column(DateTime, nullable=False, doc="When round started")
     round_ended_at = Column(DateTime, default=func.now(), doc="When round ended")
     
@@ -807,7 +794,7 @@ class MediaLiteracyAnalytics(Base):
     improvement_percentage = Column(Float, nullable=True, doc="Percentage improvement")
     
     # Learning context
-    learning_source = Column(String(50), nullable=False, doc="How learning occurred (drunk_tip, discussion, etc.)")
+    learning_source = Column(String(50), nullable=False, doc="How learning occurred (discussion, etc.)")
     educational_content_id = Column(String(100), nullable=True, doc="Specific educational content ID")
     learning_session_duration = Column(Integer, nullable=True, doc="Duration of learning session in minutes")
     
@@ -829,47 +816,4 @@ class MediaLiteracyAnalytics(Base):
     game = relationship("Game")
     
     def __repr__(self) -> str:
-        return f"<MediaLiteracyAnalytics(user_id={self.user_id}, improvement={self.improvement_percentage:.1f}%)>"
-
-
-class DrunkRoleAssignment(Base):
-    """
-    Track Drunk role rotation and educational content delivery.
-    
-    This ensures fair rotation and tracks educational effectiveness.
-    """
-    __tablename__ = "drunk_role_assignments"
-    
-    # Primary key
-    id = Column(String(36), primary_key=True, default=generate_uuid, doc="Unique assignment record ID")
-    
-    # Foreign keys
-    game_id = Column(String(36), ForeignKey("games.id"), nullable=False, doc="Game ID")
-    player_id = Column(BigInteger, ForeignKey("users.id"), nullable=False, doc="Player who is/was Drunk")
-    
-    # Assignment details
-    round_assigned = Column(Integer, nullable=False, doc="Round when player became Drunk")
-    round_rotation_ends = Column(Integer, nullable=True, doc="Round when Drunk role rotates away")
-    was_original_drunk = Column(Boolean, default=False, doc="Whether this was the initial assignment")
-    rotation_position = Column(Integer, nullable=False, doc="Position in rotation order")
-    
-    # Educational content delivered
-    tips_shared = Column(JSON, default=list, doc="Educational tips shared while Drunk")
-    concepts_taught = Column(JSON, default=list, doc="Media literacy concepts taught")
-    player_engagement = Column(JSON, default=dict, doc="How other players engaged with tips")
-    
-    # Performance metrics
-    educational_effectiveness = Column(Float, nullable=True, doc="How effective the educational content was")
-    players_who_learned = Column(JSON, default=list, doc="Players who showed learning from tips")
-    questions_answered = Column(Integer, default=0, doc="Number of questions answered")
-    
-    # Timestamps
-    assigned_at = Column(DateTime, default=func.now(), doc="When role was assigned")
-    rotation_completed_at = Column(DateTime, nullable=True, doc="When rotation to next player occurred")
-    
-    # Relationships
-    game = relationship("Game")
-    player = relationship("User")
-    
-    def __repr__(self) -> str:
-        return f"<DrunkRoleAssignment(player={self.player_id}, round={self.round_assigned}, pos={self.rotation_position})>" 
+        return f"<MediaLiteracyAnalytics(user_id={self.user_id}, improvement={self.improvement_percentage:.1f}%)>" 

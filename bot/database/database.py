@@ -70,7 +70,7 @@ async def init_database() -> None:
             ShadowBanHistory, SnipeAction,
             
             # Educational and analytics models
-            HeadlineUsage, MediaLiteracyAnalytics, DrunkRoleAssignment
+            HeadlineUsage, MediaLiteracyAnalytics
         )
         
         # Create all tables
