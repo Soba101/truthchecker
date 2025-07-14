@@ -367,60 +367,57 @@ async def vote_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 async def ability_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    Handle /ability command for using role abilities.
+    Handle /ability command for using role abilities. Add debug logging for state.
     """
-    # Safety check: ensure we have a message to reply to
     if not update.message:
         logger.warning("ability_command called without a message object")
         return
-    
-    # --- T12: Enforce private chat usage ---
     if update.effective_chat.type != 'private':
         await update.message.reply_text(
             "❌ Please use /ability in a private chat with me (open DM), not in the group chat."
         )
         return
-    
     game_id = context.chat_data.get('current_game_id')
-    if not game_id:
-        # Fallback: search through active games to find one where this user is a participant
-        for gid, session in truth_wars_manager.active_games.items():
-            if update.effective_user.id in session.get("players", {}):
-                game_id = gid
-                # Cache for future calls in this DM
-                context.chat_data['current_game_id'] = game_id
-                break
-
-    if not game_id:
-        await update.message.reply_text(
-            "❌ No active Truth Wars game found for you right now. Join a game first.")
-        return
-    
+    logger.debug(f"[ABILITY_CMD] current_game_id from chat_data: {game_id}")
     user_id = update.effective_user.id
-    
-    # Get player's role info
+    found_game = False
+    # First, check if the user is in the current_game_id
+    if game_id and game_id in truth_wars_manager.active_games:
+        session = truth_wars_manager.active_games[game_id]
+        if user_id in session.get("players", {}):
+            found_game = True
+    # If not found, search all active games for the user
+    if not found_game:
+        for gid, session in truth_wars_manager.active_games.items():
+            if user_id in session.get("players", {}):
+                game_id = gid
+                context.chat_data['current_game_id'] = game_id
+                found_game = True
+                logger.debug(f"[ABILITY_CMD] Found game for user {user_id}: {game_id}")
+                break
+    if not found_game:
+        logger.warning(f"[ABILITY_CMD] No active game found for user {user_id}")
+        await update.message.reply_text(
+            "❌ You are not in any active Truth Wars game right now. Join or start a new game to use your abilities."
+        )
+        return
     role_info = await truth_wars_manager.get_player_role_info(game_id, user_id)
-    
+    logger.debug(f"[ABILITY_CMD] Role info for user {user_id} in game {game_id}: {role_info}")
     if not role_info:
+        logger.warning(f"[ABILITY_CMD] No role info for user {user_id} in game {game_id}")
         await update.message.reply_text(
             "❌ You are not in the current game or don't have a role assigned yet."
         )
         return
-    
-    # Set bot context for the manager
     truth_wars_manager.set_bot_context(context)
-    
-    # Attempt to use the role ability
     ability_result = await truth_wars_manager.use_role_ability(game_id, user_id)
-    
+    logger.debug(f"[ABILITY_CMD] ability_result: {ability_result}")
     if ability_result["success"]:
-        # Ability was successfully used
         await update.message.reply_text(
             f"✅ {ability_result['message']}",
             parse_mode='Markdown'
         )
     else:
-        # Ability couldn't be used or already used
         await update.message.reply_text(
             f"❌ {ability_result['message']}"
         )
@@ -1101,8 +1098,22 @@ async def handle_swap_headline_callback(update: Update, context: ContextTypes.DE
 
     if action == "yes":
         # Scammer chose to swap the headline
+        role.wants_to_swap = True
         result = await truth_wars_manager.use_role_ability(game_id, user_id)
         if result.get("success"):
+            # Delete the previous headline voting message
+            last_msg_id = game_session.get("last_headline_message_id")
+            chat_id = game_session["chat_id"]
+            if last_msg_id:
+                try:
+                    await context.bot.delete_message(chat_id=chat_id, message_id=last_msg_id)
+                except Exception as del_err:
+                    logger.warning(f"Failed to delete old headline voting message: {del_err}")
+            # Send the new headline voting message
+            new_headline = game_session.get("current_headline")
+            if new_headline:
+                from .truth_wars_handlers import send_headline_voting
+                await send_headline_voting(context, game_id, new_headline)
             await query.edit_message_text(text="✅ Headline swapped successfully!")
         else:
             await query.edit_message_text(text=f"❌ {result.get('message', 'Failed to swap headline.')}")

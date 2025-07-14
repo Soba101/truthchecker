@@ -175,38 +175,26 @@ class TruthWarsManager:
     
     async def join_game(self, game_id: str, user_id: int, username: str = None) -> Tuple[bool, str]:
         """
-        Add a player to an existing game.
-        
-        Args:
-            game_id: ID of the game to join
-            user_id: User ID of the player joining
-            username: Username of the player joining
-            
-        Returns:
-            Tuple: (success, message)
+        Add a player to an existing game. Only allow joining during LOBBY phase. Add debug logging.
         """
         if game_id not in self.active_games:
+            logger.warning(f"[JOIN] Game not found: {game_id}")
             return False, "Game not found"
-            
         game_session = self.active_games[game_id]
-        
         # Check if game is in lobby phase
         if game_session["state_machine"].get_current_phase_type() != PhaseType.LOBBY:
-            return False, "Game has already started"
-            
+            logger.warning(f"[JOIN] Attempt to join after LOBBY phase: user={user_id}, game={game_id}")
+            return False, "Game has already started. You can only join during the lobby phase."
         # Check if player already joined
         if user_id in game_session["players"]:
+            logger.info(f"[JOIN] User already in game: user={user_id}, game={game_id}")
             return False, "You are already in this game"
-            
         # Check if game is full
         if len(game_session["players"]) >= 10:
+            logger.info(f"[JOIN] Game full: game={game_id}")
             return False, "Game is full (maximum 10 players)"
-            
         try:
-            # Get the actual UUID from the game session data
             actual_game_id = game_session["game_id"]
-            
-            # Add player to database
             async with DatabaseSession() as session:
                 game_player = GamePlayer(
                     game_id=actual_game_id,
@@ -214,92 +202,61 @@ class TruthWarsManager:
                 )
                 session.add(game_player)
                 await session.commit()
-            
-            # Add to session data
             game_session["players"][user_id] = {
                 "user_id": user_id,
                 "username": username or f"Player {user_id}",
                 "joined_at": datetime.now(timezone.utc)
             }
-            
-            # Initialize player reputation (starts with 3 RP as per design document)
             game_session["player_reputation"][user_id] = 3
-            
             player_count = len(game_session["players"])
-            log_game_event(game_id, "player_joined", user_id=user_id, player_count=player_count)
-            
+            logger.info(f"[JOIN] User joined: user={user_id}, game={game_id}, count={player_count}")
+            logger.debug(f"[JOIN] Players now: {list(game_session['players'].keys())}")
             return True, f"Joined game! ({player_count}/10 players)"
-            
         except Exception as e:
-            logger.error(f"Failed to join game - game_id: {game_id}, user_id: {user_id}, error: {str(e)}")
+            logger.error(f"[JOIN] Failed: game_id={game_id}, user_id={user_id}, error={str(e)}")
             return False, "Failed to join game"
     
     async def start_game(self, game_id: str, force_start: bool = False, user_id: Optional[int] = None) -> Tuple[bool, str]:
         """
-        Start a Truth Wars game if conditions are met.
-        
-        Args:
-            game_id: ID of the game to start
-            force_start: Whether to force start with minimum players
-            user_id: User ID trying to start the game (for permission check)
-            
-        Returns:
-            Tuple: (success, message)
+        Start a Truth Wars game if conditions are met. Add debug logging for player/role state.
         """
         if game_id not in self.active_games:
+            logger.warning(f"[START] Game not found: {game_id}")
             return False, "Game not found"
-            
         game_session = self.active_games[game_id]
-        
-        # Check if user is the creator (only creator can start the game)
         if user_id is not None and user_id != game_session["creator_id"]:
+            logger.warning(f"[START] Non-creator tried to start: user={user_id}, game={game_id}")
             return False, "Only the game creator can start the game"
-        
         player_count = len(game_session["players"])
-        
-        # Check minimum players (reduced to 1 for testing)
         if player_count < 1:
+            logger.warning(f"[START] Not enough players: game={game_id}")
             return False, f"Need at least 1 player to start (currently {player_count})"
-            
-        # Check if already started
         current_phase = game_session["state_machine"].get_current_phase_type()
         if current_phase != PhaseType.LOBBY:
+            logger.warning(f"[START] Game already started: game={game_id}")
             return False, "Game has already started"
-            
         try:
-            # Get the actual UUID from the game session data
             actual_game_id = game_session["game_id"]
-            
-            # Update game status in database
             async with DatabaseSession() as session:
                 game = await session.get(Game, actual_game_id)
                 if game:
                     game.status = GameStatus.ACTIVE
                     game.started_at = datetime.now(timezone.utc)
-                
                 truth_wars_game = await session.get(TruthWarsGame, actual_game_id)
                 if truth_wars_game:
                     truth_wars_game.phase = "role_assignment"
                     truth_wars_game.phase_end_time = datetime.now(timezone.utc) + timedelta(seconds=60)
-            
-            # Assign roles to players
             player_ids = list(game_session["players"].keys())
+            logger.debug(f"[START] Assigning roles to: {player_ids}")
             role_assignments = assign_roles(player_ids)
-            
-            # Store role assignments
             game_session["player_roles"] = {}
-            
-            # Store roles in database and session
             async with DatabaseSession() as session:
                 for player_id, role in role_assignments.items():
-                    # Store in session data
                     game_session["player_roles"][player_id] = {
                         "role": role,
                         "faction": role.faction,
                         "is_alive": True
                     }
-                    
-                    # Create role record in database
                     from sqlalchemy import select
                     result = await session.execute(
                         select(GamePlayer.id).where(
@@ -308,7 +265,6 @@ class TruthWarsManager:
                         )
                     )
                     game_player_row = result.first()
-                    
                     if game_player_row:
                         player_role = PlayerRole(
                             game_player_id=game_player_row.id,
@@ -316,28 +272,19 @@ class TruthWarsManager:
                             faction=role.faction
                         )
                         session.add(player_role)
-                
                 await session.commit()
-            
-            # Initialize fact checker balance (one round without info)
+            logger.info(f"[START] Roles assigned: {[(pid, info['role'].name) for pid, info in game_session['player_roles'].items()]}")
             self._initialize_fact_checker_balance(game_session)
-            
-            # Prepare headline pool according to v3 distribution rules (Set A/B)
             await self._prepare_headline_set(game_session)
-            
-            # Transition to role assignment phase
             game_session["state_machine"].force_transition(
                 PhaseType.ROLE_ASSIGNMENT, 
                 self._get_game_state(game_session)
             )
-            
             log_game_event(game_id, "game_started", player_count=player_count)
             logger.info(f"Truth Wars game started - game_id: {game_id}, players: {player_count}")
-            
             return True, "Game started! Role assignment in progress..."
-            
         except Exception as e:
-            logger.error(f"Failed to start game - game_id: {game_id}, error: {str(e)}")
+            logger.error(f"[START] Failed: game_id={game_id}, error={str(e)}")
             return False, "Failed to start game"
     
     async def get_random_headline(self, difficulty: str = "medium", category: Optional[str] = None) -> Optional[Headline]:
@@ -846,6 +793,36 @@ class TruthWarsManager:
                 "explanation": headline.explanation
             }
 
+
+        # --- NEW: Notify all scammers of headline authenticity ---
+            # This ensures scammers always know if the headline is real or fake.
+            bot_context = getattr(self, '_bot_context', None)
+            if bot_context:
+                from bot.game.roles import RoleType
+                for user_id, role_info in game_session["player_roles"].items():
+                    role = role_info.get("role")
+                    if role and getattr(role, "role_type", None) == RoleType.SCAMMER:
+                        # Prepare message
+                        headline_is_real = headline.is_real
+                        headline_text = headline.text
+                        explanation = headline.explanation
+                        correct_answer = "REAL" if headline_is_real else "FAKE"
+                        scammer_message = (
+                            f"😈 **SCAMMER INTEL**\n\n"
+                            f"📰 **Headline:** {headline_text}\n\n"
+                            f"🎯 **Correct Answer:** This headline is **{correct_answer}**\n\n"
+                            f"💡 **Explanation:** {explanation}\n\n"
+                            f"Use this info to mislead the other players!"
+                        )
+                        # Send private message to scammer
+                        try:
+                            await bot_context.bot.send_message(
+                                chat_id=user_id,
+                                text=scammer_message
+                            )
+                        except Exception as e:
+                            logger.error(f"Failed to send scammer intel to user {user_id}: {e}")
+            # --- END SCAMMER NOTIFICATION ---
             # Drunk role removed – no inside-info message needed
             
             # Note: Players must use /ability command to activate their special abilities
@@ -2196,66 +2173,47 @@ class TruthWarsManager:
     
     async def use_role_ability(self, game_id: str, user_id: int) -> Dict[str, Any]:
         """
-        Use a player's role ability.
-        
-        Args:
-            game_id: Game ID
-            user_id: Player ID
-            
-        Returns:
-            Dict: Result of ability usage
+        Use a player's role ability. Add debug logging for player/role state.
         """
         try:
             if game_id not in self.active_games:
+                logger.warning(f"[ABILITY] Game not found: {game_id}")
                 return {"success": False, "message": "Game not found"}
-            
             game_session = self.active_games[game_id]
-            
-            # Check if player is in the game
             if user_id not in game_session["players"]:
+                logger.warning(f"[ABILITY] User not in game: user={user_id}, game={game_id}")
+                logger.debug(f"[ABILITY] Current players: {list(game_session['players'].keys())}")
                 return {"success": False, "message": "You are not in this game"}
-            
-            # Get player's role
             role_info = game_session["player_roles"].get(user_id)
             if not role_info:
+                logger.warning(f"[ABILITY] No role assigned: user={user_id}, game={game_id}")
+                logger.debug(f"[ABILITY] Current roles: {list(game_session['player_roles'].keys())}")
                 return {"success": False, "message": "No role assigned"}
-            
             role = role_info["role"]
             current_round = game_session["round_number"]
-            
-            # Check if player can use abilities (not Ghost Viewer)
             if not self._can_player_use_ability(game_session, user_id):
-                return {"success": False, "message": "Ghost Viewers (0 RP) cannot use abilities"}
-            
-            # Check if player is shadow banned
+                logger.info(f"[ABILITY] User cannot use ability (0 RP or shadow banned): user={user_id}, game={game_id}")
+                return {"success": False, "message": "Ghost Viewers (0 RP) or shadow banned players cannot use abilities"}
             if self._is_player_shadow_banned(game_session, user_id):
+                logger.info(f"[ABILITY] User is shadow banned: user={user_id}, game={game_id}")
                 return {"success": False, "message": "Shadow banned players cannot use abilities"}
-            
-            # Check if ability was already used this round
             ability_usage_key = f"ability_used_round_{current_round}"
             if game_session.get(ability_usage_key, {}).get(user_id, False):
+                logger.info(f"[ABILITY] Already used this round: user={user_id}, round={current_round}, game={game_id}")
                 return {"success": False, "message": "You have already used your ability this round"}
-            
-            # Check game phase - abilities can only be used during discussion phase
             current_phase = game_session["state_machine"].get_current_phase_type()
             if current_phase.value not in ["discussion", "headline_reveal"]:
+                logger.info(f"[ABILITY] Wrong phase: phase={current_phase}, user={user_id}, game={game_id}")
                 return {"success": False, "message": "Abilities can only be used during headline reveal or discussion phase"}
-            
-            # Use role-specific ability
             ability_result = await self._activate_role_ability(game_session, user_id, role)
-            
             if ability_result["success"]:
-                # Mark ability as used this round
                 if ability_usage_key not in game_session:
                     game_session[ability_usage_key] = {}
                 game_session[ability_usage_key][user_id] = True
-                
-                logger.info(f"Player {user_id} used role ability in game {game_id}, round {current_round}")
-            
+                logger.info(f"[ABILITY] User used ability: user={user_id}, round={current_round}, game={game_id}")
             return ability_result
-            
         except Exception as e:
-            logger.error(f"Failed to use role ability - game_id: {game_id}, user_id: {user_id}, error: {str(e)}")
+            logger.error(f"[ABILITY] Failed: game_id={game_id}, user_id={user_id}, error={str(e)}")
             return {"success": False, "message": "Failed to use ability"}
     
     async def _activate_role_ability(self, game_session: Dict, user_id: int, role) -> Dict[str, Any]:
@@ -2407,7 +2365,7 @@ class TruthWarsManager:
             return {"success": False, "message": "Failed to get drunk intel"}
     
     async def _activate_scammer_ability(self, game_session: Dict, user_id: int, role) -> Dict[str, Any]:
-        """Activate Scammer's information ability."""
+        """Activate Scammer's information or swap ability."""
         try:
             bot_context = getattr(self, '_bot_context', None)
             if not bot_context:
@@ -2418,100 +2376,75 @@ class TruthWarsManager:
                 # Fallback safety – should be set in Role class
                 role.has_swapped_headline = False
 
-            # === NEW: Block swap if scammer has already voted on the headline ===
-            # Votes are tracked in game_session["votes"] as {user_id: {...}}
-            if user_id in game_session.get("votes", {}):
-                # The scammer has already voted, so they cannot swap
+            # --- SWAP LOGIC: If the Scammer has not swapped and is using the swap ability ---
+            if not role.has_swapped_headline and getattr(role, 'wants_to_swap', False):
+                # Fetch a new headline
+                new_headline_obj = await self.get_random_headline()
+                if new_headline_obj:
+                    # Set the new headline in the game session
+                    game_session["current_headline"] = {
+                        "id": new_headline_obj.id,
+                        "text": new_headline_obj.text,
+                        "is_real": new_headline_obj.is_real,
+                        "source": new_headline_obj.source,
+                        "explanation": new_headline_obj.explanation
+                    }
+                    # Mark that the Scammer has used their swap
+                    role.has_swapped_headline = True
+                    # Reset the wants_to_swap flag
+                    role.wants_to_swap = False
+                    return {"success": True, "message": "Headline swapped"}
+                else:
+                    return {"success": False, "message": "Failed to fetch a new headline"}
+            # --- END SWAP LOGIC ---
+
+            # --- INTEL LOGIC: If not swapping, provide headline info (once per round) ---
+            current_round = game_session["round_number"]
+            ability_usage_key = f"scammer_info_used_round_{current_round}"
+            if game_session.get(ability_usage_key, {}).get(user_id, False):
                 await bot_context.bot.send_message(
                     chat_id=user_id,
                     text=(
-                        "😈 **HEADLINE SWAP BLOCKED**\n\n"
-                        "❌ You cannot use your headline-swap ability after voting on the headline.\n"
-                        "(You must swap before casting your vote.)"
+                        "😈 **SCAMMER INTEL**\n\n"
+                        "You have already used your ability to view the headline info this round."
                     )
                 )
-                return {"success": False, "message": "Cannot swap after voting on the headline"}
-            # === END NEW LOGIC ===
+                return {"success": False, "message": "Already used ability this round"}
 
-            if role.has_swapped_headline:
+            current_headline = game_session.get("current_headline")
+            if not current_headline:
                 await bot_context.bot.send_message(
                     chat_id=user_id,
-                    text=(
-                        "😈 **HEADLINE SWAP**\n\n"
-                        "❌ You have already used your headline-swap ability this game."
-                    )
+                    text="😈 **SCAMMER INTEL**\n\nNo active headline to analyze."
                 )
-                return {"success": False, "message": "Headline swap already used"}
+                return {"success": False, "message": "No active headline"}
 
-            # --- Perform the headline swap ---
-            # Fetch a new random headline (same helper used at round start)
-            new_headline = await self.get_random_headline()
+            headline_is_real = current_headline.get("is_real", True)
+            headline_text = current_headline.get("text", "Unknown headline")
+            explanation = current_headline.get("explanation", "No explanation available")
+            correct_answer = "REAL" if headline_is_real else "FAKE"
 
-            if not new_headline:
-                await bot_context.bot.send_message(
-                    chat_id=user_id,
-                    text=(
-                        "😈 **HEADLINE SWAP FAILED**\n\n"
-                        "No alternative headline could be found. Try again later."
-                    )
-                )
-                return {"success": False, "message": "No headlines available to swap"}
-
-            # Update game session with new headline and reset votes
-            game_session["current_headline"] = {
-                "id": new_headline.id,
-                "text": new_headline.text,
-                "is_real": new_headline.is_real,
-                "source": new_headline.source,
-                "explanation": new_headline.explanation
-            }
-
-            # --- Remove any old headline voting notifications ---
-            pending = game_session.get("pending_notifications", [])
-            game_session["pending_notifications"] = [n for n in pending if n.get("type") != "headline_voting"]
-
-            # --- FIX: Delete the previous headline voting message from the group chat, if it exists ---
-            last_msg_id = game_session.get("last_headline_message_id")
-            chat_id = game_session.get("chat_id")
-            if last_msg_id and chat_id:
-                try:
-                    await bot_context.bot.delete_message(chat_id=chat_id, message_id=last_msg_id)
-                except Exception as del_err:
-                    # Log but do not fail the swap if deletion fails
-                    logger.warning(f"Failed to delete old headline voting message after swap: {del_err}")
-            # --- END FIX ---
-
-            # Queue notification for group chat to present the new headline
-            game_session.setdefault("pending_notifications", []).append({
-                "type": "headline_voting",
-                "headline": {
-                    "id": new_headline.id,
-                    "text": new_headline.text,
-                    "source": new_headline.source,
-                    "is_real": new_headline.is_real,
-                    "explanation": new_headline.explanation
-                },
-                "message": "📰 The headline has mysteriously changed! Read carefully and vote again!"
-            })
-
-            # Mark ability as used
-            role.has_swapped_headline = True
-
-            # Inform the Scammer privately
+            # Send the info to the scammer privately
             await bot_context.bot.send_message(
                 chat_id=user_id,
                 text=(
-                    "😈 **HEADLINE SWAP SUCCESSFUL**\n\n"
-                    "You replaced the current headline with a new one."
-                    " Players will now discuss and vote on it."
+                    f"😈 **SCAMMER INTEL**\n\n"
+                    f"📰 **Headline:** {headline_text}\n\n"
+                    f"🎯 **Correct Answer:** This headline is **{correct_answer}**\n\n"
+                    f"💡 **Explanation:** {explanation}\n\n"
+                    f"Use this info to mislead the other players!"
                 )
             )
+            # Mark ability as used for this round
+            if ability_usage_key not in game_session:
+                game_session[ability_usage_key] = {}
+            game_session[ability_usage_key][user_id] = True
 
-            return {"success": True, "message": "Headline swapped successfully"}
+            return {"success": True, "message": "Scammer intel sent"}
 
         except Exception as e:
             logger.error(f"Failed to activate scammer ability: {e}")
-            return {"success": False, "message": "Failed to use headline swap"}
+            return {"success": False, "message": "Failed to use scammer ability"}
     
     def _is_player_shadow_banned(self, game_session: Dict, user_id: int) -> bool:
         """Check if player is currently shadow banned."""
@@ -2941,12 +2874,3 @@ class TruthWarsManager:
                 logger.info(f"Sent headline swap prompt to Scammer {scammer_id} for game {game_id}")
             except Exception as e:
                 logger.error(f"Failed to send headline swap prompt to Scammer {scammer_id}: {e}")
-
-            # --- Delete the previous headline voting message if it exists ---
-            last_msg_id = game_session.get("last_headline_message_id")
-            chat_id = game_session["chat_id"]
-            if last_msg_id:
-                try:
-                    await bot_context.bot.delete_message(chat_id=chat_id, message_id=last_msg_id)
-                except Exception as del_err:
-                    logger.warning(f"Failed to delete old headline voting message: {del_err}")
