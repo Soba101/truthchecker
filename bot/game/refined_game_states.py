@@ -115,7 +115,6 @@ class RefinedGameStateMachine:
             
         elif self.current_phase == PhaseType.DISCUSSION:
             # Transition after 3 minutes OR when all eligible players have voted
-            print(f"DEBUG (can_transition): Phase=DISCUSSION, time_elapsed={time_elapsed}, limit={phase_time_limit}")
             all_voted = game_state.get("all_eligible_voted", False)
             return all_voted or time_elapsed >= phase_time_limit
             

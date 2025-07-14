@@ -146,6 +146,12 @@ class TruthWarsManager:
                 "snipe_op_msg_sent_round": None,  # Track round when snipe message was sent
             }
             
+            # --- CRITICAL: Remove any lingering ability usage flags from previous games ---
+            # This ensures that ability usage is always fresh for each new game.
+            for key in list(self.active_games[game_id_str].keys()):
+                if key.startswith("ability_used_round_"):
+                    del self.active_games[game_id_str][key]
+            
             # === NEW: set elimination cap based on player count ===
             self.active_games[game_id_str]["elimination_limit"] = max(0, len(self.active_games[game_id_str]["players"]) - 2)
             # Ensure counters start fresh
@@ -804,6 +810,11 @@ class TruthWarsManager:
         
         # === NEW: reset round-based tracking ===
         game_session["snipe_used_this_round"] = False
+        # --- CRITICAL: Remove all ability_used_round_* keys at the start of each round ---
+        # This prevents ability usage from previous rounds or games from blocking players.
+        for key in list(game_session.keys()):
+            if key.startswith("ability_used_round_"):
+                del game_session[key]
         # Calculate elimination limit if not already set (handles cases where it was 0 during lobby)
         if game_session.get("elimination_limit") in (None, 0):
             game_session["elimination_limit"] = max(0, len(game_session["players"]) - 2)
@@ -938,6 +949,13 @@ class TruthWarsManager:
             await self._update_player_reputation(game_session, vote_results)
             
             # Check for win conditions after reputation update
+            # --- FIX: Check for all Scammers eliminated (Truth Team win) before points ---
+            if self._check_shadow_ban_win_conditions(game_session):
+                # If this returns True, the winner and reason are already set
+                game_session["game_over"] = True
+                self._trigger_game_end(game_session)
+                return
+            # --- END FIX ---
             if game_session["team_scores"]["truth"] >= 3:
                 game_session["winner"] = "truth_seekers"
                 game_session["win_reason"] = "Truth Team reached 3 points"
@@ -2400,6 +2418,21 @@ class TruthWarsManager:
                 # Fallback safety – should be set in Role class
                 role.has_swapped_headline = False
 
+            # === NEW: Block swap if scammer has already voted on the headline ===
+            # Votes are tracked in game_session["votes"] as {user_id: {...}}
+            if user_id in game_session.get("votes", {}):
+                # The scammer has already voted, so they cannot swap
+                await bot_context.bot.send_message(
+                    chat_id=user_id,
+                    text=(
+                        "😈 **HEADLINE SWAP BLOCKED**\n\n"
+                        "❌ You cannot use your headline-swap ability after voting on the headline.\n"
+                        "(You must swap before casting your vote.)"
+                    )
+                )
+                return {"success": False, "message": "Cannot swap after voting on the headline"}
+            # === END NEW LOGIC ===
+
             if role.has_swapped_headline:
                 await bot_context.bot.send_message(
                     chat_id=user_id,
@@ -2433,8 +2466,20 @@ class TruthWarsManager:
                 "explanation": new_headline.explanation
             }
 
-            # Clear any existing votes – players must vote on the new headline
-            game_session["votes"] = {}
+            # --- Remove any old headline voting notifications ---
+            pending = game_session.get("pending_notifications", [])
+            game_session["pending_notifications"] = [n for n in pending if n.get("type") != "headline_voting"]
+
+            # --- FIX: Delete the previous headline voting message from the group chat, if it exists ---
+            last_msg_id = game_session.get("last_headline_message_id")
+            chat_id = game_session.get("chat_id")
+            if last_msg_id and chat_id:
+                try:
+                    await bot_context.bot.delete_message(chat_id=chat_id, message_id=last_msg_id)
+                except Exception as del_err:
+                    # Log but do not fail the swap if deletion fails
+                    logger.warning(f"Failed to delete old headline voting message after swap: {del_err}")
+            # --- END FIX ---
 
             # Queue notification for group chat to present the new headline
             game_session.setdefault("pending_notifications", []).append({
@@ -2591,9 +2636,15 @@ class TruthWarsManager:
         """Send enhanced snipe opportunity message with clear instructions."""
         if not bot_context:
             return
-            
+        
         current_round = game_session["round_number"]
         chat_id = game_session["chat_id"]
+
+        # --- GUARD: Prevent duplicate snipe messages in the same round ---
+        if game_session.get("snipe_op_msg_sent_round") == current_round:
+            # Already sent for this round, skip
+            return
+        # ---------------------------------------------------------------
         
         # Build public snipe notice (only Fact Checker may act, anonymity preserved)
         snipe_message = (
@@ -2890,3 +2941,12 @@ class TruthWarsManager:
                 logger.info(f"Sent headline swap prompt to Scammer {scammer_id} for game {game_id}")
             except Exception as e:
                 logger.error(f"Failed to send headline swap prompt to Scammer {scammer_id}: {e}")
+
+            # --- Delete the previous headline voting message if it exists ---
+            last_msg_id = game_session.get("last_headline_message_id")
+            chat_id = game_session["chat_id"]
+            if last_msg_id:
+                try:
+                    await bot_context.bot.delete_message(chat_id=chat_id, message_id=last_msg_id)
+                except Exception as del_err:
+                    logger.warning(f"Failed to delete old headline voting message: {del_err}")

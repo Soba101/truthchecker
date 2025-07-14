@@ -37,6 +37,9 @@ async def start_truth_wars(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     chat_id = update.effective_chat.id
     user_id = update.effective_user.id
     
+    # Clear any previous game context for this chat (prevents stale state)
+    context.chat_data.pop('current_game_id', None)
+    
     # Check if chat is suitable for group game
     if update.effective_chat.type == 'private':
         await update.message.reply_text(
@@ -775,7 +778,7 @@ async def send_headline_voting(context: ContextTypes.DEFAULT_TYPE, game_id: str,
         )
         
         # Send headline to chat
-        await context.bot.send_message(
+        sent_message = await context.bot.send_message(
             chat_id=chat_id,
             text=headline_message,
             reply_markup=reply_markup,
@@ -785,6 +788,8 @@ async def send_headline_voting(context: ContextTypes.DEFAULT_TYPE, game_id: str,
         # Record that we've sent this headline so duplicates are suppressed next time
         if game_session is not None:
             game_session["last_headline_sent_id"] = headline.get("id")
+            # Store the Telegram message ID for later deletion
+            game_session["last_headline_message_id"] = sent_message.message_id
 
         logger.info(f"Headline sent to chat {chat_id} for game {game_id}")
         
@@ -940,6 +945,9 @@ async def handle_end_game_callback(update: Update, context: ContextTypes.DEFAULT
         
         if result["success"]:
             await query.answer("🛑 Game ended!", show_alert=False)
+            
+            # Clear current_game_id from chat context to prevent stale state
+            context.chat_data.pop('current_game_id', None)
             
             # Edit the message to remove buttons
             try:
