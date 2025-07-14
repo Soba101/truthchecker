@@ -15,7 +15,6 @@ class RoleType(Enum):
     """Define the different role types in Truth Wars."""
     FACT_CHECKER = "fact_checker"
     SCAMMER = "scammer"
-    DRUNK = "drunk"
     INFLUENCER = "influencer"
     NORMIE = "normie"
 
@@ -58,7 +57,7 @@ class Role(ABC):
     
     def can_use_snipe(self) -> bool:
         """Check if this role can use snipe ability."""
-        return hasattr(self, 'snipe_ability') and not self.has_used_snipe
+        return getattr(self, 'snipe_ability', False) and not self.has_used_snipe
     
     def use_snipe(self, target_user_id: int, game_state: Dict, sniper_id: int) -> Dict[str, Any]:
         """
@@ -266,50 +265,6 @@ class Scammer(Role):
             }
 
 
-class Drunk(Role):
-    """
-    🧍 Drunk Role (Rotating)
-    
-    - Rotates among normies each round
-    - Receives correct answer for current round
-    - Must share source verification tips
-    - Educational role for media literacy
-    """
-    
-    def __init__(self):
-        super().__init__(RoleType.DRUNK, "truth_seekers")
-        
-    @property
-    def name(self) -> str:
-        return "🧍 \"Drunk\" (Informed)"
-    
-    def get_description(self) -> str:
-        return (
-            "🧍 **\"Drunk\" (Temporary Role)**\n\n"
-            "🎯 **Your Mission:**\n"
-            "• You know the truth about THIS round's headline\n"
-            "• Share source verification tips with everyone\n"
-            "• Help others learn to identify reliable sources\n\n"
-            "🔍 **Special Abilities:**\n"
-            "• You receive the correct answer for this round\n"
-            "• **Responsibility**: Share verification techniques\n"
-            "• Educate others on spotting fake news\n\n"
-            "📚 **Learn & Teach**: This is your chance to help others develop media literacy!\n\n"
-            "🏆 **You win when**: Truth team flags 3 fake headlines correctly"
-        )
-    
-    def get_win_condition(self) -> str:
-        return "Help educate others and support the truth team"
-
-    def get_abilities(self) -> List[str]:
-        """Get list of abilities available to Drunk."""
-        return [
-            "Receive correct answer for current round's headline",
-            "Share source verification tips with everyone",
-            "Educate others on spotting fake news"
-        ]
-
-
 class Influencer(Role):
     """
     🎭 Influencer Role (7+ players only)
@@ -363,7 +318,6 @@ class Normie(Role):
     
     - Regular player with no special abilities
     - Must learn to identify fake news through discussion
-    - Can become "Drunk" in rotating fashion
     """
     
     def __init__(self):
@@ -382,7 +336,6 @@ class Normie(Role):
             "• Vote based on your best judgment\n\n"
             "🔍 **Abilities:**\n"
             "• No special knowledge or abilities\n"
-            "• May randomly become \"Drunk\" for one round\n"
             "• Rely on discussion and critical thinking\n\n"
             "📚 **Learning**: This is your chance to develop real media literacy skills!\n\n"
             "🏆 **You win when**: Truth team flags 3 fake headlines correctly"
@@ -396,7 +349,7 @@ class Normie(Role):
         return [
             "No special knowledge or abilities",
             "Learn to identify fake news through discussion",
-            "May randomly become 'Drunk' for one round"
+            "Participate in voting and discussion"
         ]
 
 
@@ -418,32 +371,30 @@ def assign_refined_roles(player_ids: List[int]) -> Dict[int, Role]:
     random.shuffle(shuffled_players)
     
     if player_count == 5:
-        # 5 players: 1 Fact Checker, 1 Scammer, 1 Drunk, 2 Normies
+        # 5 players: 1 Fact Checker, 1 Scammer, 3 Normies
         role_assignments[shuffled_players[0]] = FactChecker()
         role_assignments[shuffled_players[1]] = Scammer()
-        role_assignments[shuffled_players[2]] = Drunk()
+        role_assignments[shuffled_players[2]] = Normie()
         role_assignments[shuffled_players[3]] = Normie()
         role_assignments[shuffled_players[4]] = Normie()
         
     elif player_count == 6:
-        # 6 players: 1 Fact Checker, 1 Scammer, 1 Drunk, 3 Normies
+        # 6 players: 1 Fact Checker, 1 Scammer, 4 Normies
         role_assignments[shuffled_players[0]] = FactChecker()
         role_assignments[shuffled_players[1]] = Scammer()
-        role_assignments[shuffled_players[2]] = Drunk()
+        role_assignments[shuffled_players[2]] = Normie()
         role_assignments[shuffled_players[3]] = Normie()
         role_assignments[shuffled_players[4]] = Normie()
         role_assignments[shuffled_players[5]] = Normie()
         
     elif player_count >= 7:
-        # 7+ players: 1 Fact Checker, 2 Scammers, 1 Influencer, 1 Drunk, rest Normies
+        # 7+ players: 1 Fact Checker, 2 Scammers, 1 Influencer, rest Normies
         role_assignments[shuffled_players[0]] = FactChecker()
         role_assignments[shuffled_players[1]] = Scammer()
         role_assignments[shuffled_players[2]] = Scammer()
         role_assignments[shuffled_players[3]] = Influencer()
-        role_assignments[shuffled_players[4]] = Drunk()
-        
         # Fill remaining slots with Normies
-        for i in range(5, player_count):
+        for i in range(4, player_count):
             role_assignments[shuffled_players[i]] = Normie()
     
     else:
@@ -479,8 +430,6 @@ def get_role_by_type(role_type: RoleType) -> Role:
         return FactChecker()
     elif role_type == RoleType.SCAMMER:
         return Scammer()
-    elif role_type == RoleType.DRUNK:
-        return Drunk()
     elif role_type == RoleType.INFLUENCER:
         return Influencer()
     elif role_type == RoleType.NORMIE:
@@ -500,7 +449,6 @@ def create_role_instance(role_name: str) -> Role:
     role_map = {
         "fact_checker": RoleType.FACT_CHECKER,
         "scammer": RoleType.SCAMMER,
-        "drunk": RoleType.DRUNK,
         "influencer": RoleType.INFLUENCER,
         "normie": RoleType.NORMIE,
         "misinformed_user": RoleType.NORMIE

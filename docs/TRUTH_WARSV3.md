@@ -1,11 +1,11 @@
 # 🕵️‍♂️ Truth Wars v3 – Streamlined Rules 🕵️‍♀️
+> **Note (2025-07):** The *Drunk* role described in earlier drafts has been removed from gameplay. Ignore related rows/rules.
 ## 1. Player Roles
 
 | Role | Count | Powers & Constraints |
 |------|-------|----------------------|
 | 🧠 **Fact Checker** | 1 | • May *peek* at the headline's truth up to **3× per game**, **never in two consecutive rounds**.<br/>• After initial votes (Rounds 1–4 only) may **snipe** 1 player *once per game*.  If the target is a **Scammer**, they are immediately shadow-banned; if not, nothing happens.  Sniping is **forbidden in Round 5**. |
 | 😈 **Scammer** | 1 (5–6 p) / 2 (7–10 p) | • Always knows the real/fake status of the headline.<br/>• Tries to steer the majority toward wrong answers.<br/>• If shadow-banned or successfully sniped, they are out. |
-| 🧍 **Drunk** | 1 | • Receives a private *hint* each round: "real" or "fake".<br/>• If shadow-banned, next round the hint is reassigned to a random Misinformed User. |
 | 🧍 **Misinformed Users** | remaining | • No special powers.<br/>• If shadow-banned, they are out. |
 | 🎭 **Influencer** | 1 (7–10 p) | • Your vote counts as **2 votes** instead of 1.<br/>• No other special knowledge or abilities. |
 
@@ -23,7 +23,7 @@
 
 ## 3. Round Structure (max 5 rounds)
 
-1. **Headline Reveal** – Show next headline.  Drunk receives their private hint.
+1. **Headline Reveal** – Show next headline.
 2. **Discussion (3 min)** – Open debate.  Silence or refusal to explain is suspicious.
    * Fact Checker may *peek* **now** (obeys cooldown rule).
 3. **Initial Vote** – Everyone votes **Trust** or **Flag**.

@@ -39,8 +39,8 @@ This document outlines the technical architecture of the Truth Wars Telegram bot
 
 #### Role System (`roles.py`)
 - **Dynamic role assignments** based on player count
-- **5-6 Players**: Fact Checker, Scammer, Drunk, Normies
-- **7+ Players**: Fact Checker, 2x Scammers, Influencer, Drunk, Normies
+- **5-6 Players**: Fact Checker, Scammer, Normies
+- **7+ Players**: Fact Checker, 2x Scammers, Influencer, Normies
 - **Special abilities**: Snipe powers, double voting, educational content
 - **Faction-based gameplay**: Truth Seekers vs Misinformers
 
@@ -84,7 +84,7 @@ snipes_available_this_round (BOOLEAN)
 ```sql
 id (UUID Primary Key)
 game_player_id (Foreign Key)
-role_name (VARCHAR) -- fact_checker, scammer, influencer, drunk, normie
+role_name (VARCHAR) -- fact_checker, scammer, influencer, normie
 faction (ENUM) -- truth_team, scammer_team
 snipe_ability_used_rounds (JSON) -- Track ability usage
 ```
@@ -322,4 +322,6 @@ bot/
 
 **Last Updated**: December 2024
 **Version**: 3.0 - Truth Wars Refined Implementation
-**Architecture**: Specialized Educational Social Deduction Game Bot 
+**Architecture**: Specialized Educational Social Deduction Game Bot
+
+**Note (2025-07):** The *Drunk* role has been removed from the codebase. Any references below remain for historical context only and do not reflect current gameplay. 

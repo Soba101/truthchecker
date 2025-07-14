@@ -79,18 +79,18 @@ settings (JSON) -- Game-specific settings
 -- Enhanced player roles for refined Truth Wars system
 id (String Primary Key) -- UUID as string
 game_player_id (Foreign Key → game_players.id)
-role_name (VARCHAR) -- 'fact_checker', 'scammer', 'influencer', 'drunk', 'normie'
+role_name (VARCHAR) -- 'fact_checker', 'scammer', 'influencer', 'normie'
 faction (ENUM) -- 'truth_team', 'scammer_team'
-is_original_drunk (BOOLEAN DEFAULT FALSE) -- Original Drunk assignment
-drunk_rotation_position (INT) -- Position in rotation
+is_original_drunk (BOOLEAN DEFAULT FALSE) -- [deprecated] Original Drunk assignment (for backward compatibility)
+drunk_rotation_position (INT) -- [deprecated] Position in rotation (for backward compatibility)
 snipe_ability_used_rounds (JSON) -- Rounds when snipe used
 snipe_ability_available (BOOLEAN DEFAULT TRUE) -- Can use snipe
 fact_checker_blind_round (INT) -- Round when FC doesn't get info
 influencer_vote_weight (INT DEFAULT 1) -- Vote weight (2 for Influencer)
-educational_tips_shared (JSON) -- Tips shared while Drunk
+educational_tips_shared (JSON) -- [deprecated] Tips shared while Drunk (for backward compatibility)
 media_literacy_content (JSON) -- Role-specific educational content
 assigned_at (TIMESTAMP)
-became_drunk_at (TIMESTAMP)
+became_drunk_at (TIMESTAMP) -- [deprecated] (for backward compatibility)
 ```
 
 ## 🎯 **Enhanced User & Educational Tables**
@@ -127,7 +127,7 @@ real_headlines_correctly_trusted (INT DEFAULT 0)
 times_as_fact_checker (INT DEFAULT 0)
 times_as_scammer (INT DEFAULT 0)
 times_as_influencer (INT DEFAULT 0)
-times_as_drunk (INT DEFAULT 0)
+times_as_drunk (INT DEFAULT 0) -- [deprecated] (for backward compatibility)
 times_as_normie (INT DEFAULT 0)
 
 -- Snipe system stats
@@ -228,7 +228,7 @@ fake_headline_flagged (BOOLEAN DEFAULT FALSE)
 contributes_to_scammer_win (BOOLEAN DEFAULT FALSE)
 contributes_to_truth_win (BOOLEAN DEFAULT FALSE)
 fact_checker_influence (BOOLEAN DEFAULT FALSE)
-drunk_tip_shared (TEXT) -- Educational tip shared
+drunk_tip_shared (TEXT) -- [deprecated] Educational tip shared (for backward compatibility)
 players_learned_something (JSON) -- Players who learned
 players_voted_correctly (JSON) -- Correct voters
 players_lost_reputation (JSON) -- Players who lost RP
@@ -314,7 +314,7 @@ misconceptions_corrected (JSON)
 before_accuracy (FLOAT)
 after_accuracy (FLOAT)
 improvement_percentage (FLOAT)
-learning_source (VARCHAR) -- 'drunk_tip', 'discussion', etc.
+learning_source (VARCHAR) -- e.g. 'discussion', 'tutorial', etc. (drunk_tip deprecated)
 educational_content_id (VARCHAR)
 learning_session_duration (INT) -- Minutes
 knowledge_retained_after_game (BOOLEAN)
@@ -326,9 +326,9 @@ learning_occurred_at (TIMESTAMP)
 measured_at (TIMESTAMP)
 ```
 
-### **drunk_role_assignments** (Educational Role Rotation)
+### **drunk_role_assignments** (Educational Role Rotation, deprecated)
 ```sql
--- Track Drunk role rotation and educational content
+-- [deprecated] Track Drunk role rotation and educational content (for backward compatibility)
 id (String Primary Key) -- UUID as string
 game_id (Foreign Key → games.id)
 player_id (BIGINT Foreign Key → users.id)
@@ -417,7 +417,7 @@ ALTER TABLE snipe_actions ADD CONSTRAINT chk_snipe_result
 ✅ **Shadow Ban Mechanics**: Snipe abilities with duration tracking  
 ✅ **5-Round Structure**: Fixed game length with round progression  
 ✅ **Educational Analytics**: Learning progress and improvement tracking  
-✅ **Role Rotation**: Drunk role rotation among Normies  
+✅ **Role Rotation**: Drunk role rotation among Normies [deprecated]  
 ✅ **v3 Team Scoring**: First-to-3-points win condition tracking  
 ✅ **Media Literacy Integration**: Comprehensive educational content system
 
@@ -434,3 +434,8 @@ ALTER TABLE snipe_actions ADD CONSTRAINT chk_snipe_result
 - Relationship integrity via foreign keys
 - Comprehensive constraint system
 - Analytics-ready structure for reporting
+
+## 📝 **Notes**
+
+**Note (2025-07):** Columns and tables related to the *Drunk* role remain in the schema for backward-compatibility but are no longer used by the application.
+// [CHANGE: July 2025] All references to the Drunk role above this line have been removed or clarified. The Drunk role is deprecated and not part of current gameplay. Historical notes and schema fields below are for reference only.

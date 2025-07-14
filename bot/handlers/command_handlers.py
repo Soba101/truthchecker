@@ -120,72 +120,33 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     # Log user action
     log_user_action(user.id, "help_command", username=user.username)
     
+    # Concise help text – easier to read on mobile
     help_text = """
-📖 **Truth Wars Bot - Complete Guide**
+📖 **Truth Wars – Quick Guide**
 
-🎮 **QUICK START:**
-1️⃣ Add bot to group chat (5-10 players)
-2️⃣ Type `/truthwars` to create game
-3️⃣ Everyone clicks "Join Game"
-4️⃣ Creator clicks "Start Game"
-5️⃣ Check private messages for your secret role!
+🚀 **Start a Game**
+1. Add the bot to a group (5-10 players)
+2. Type `/truthwars`
+3. Players tap **Join**, creator taps **Start**
 
-**🕵️ GAME COMMANDS:**
-• `/truthwars` - Create new game lobby (group chats only)
-• `/status` - Check game phase & trigger events
-• `/ability` - View your role & special powers
-• `/vote` - Eliminate players (reply to their message)
+🕹 **Core Commands**
+`/truthwars` – create lobby  
+`/ability` – your role info  
+`/vote` – Trust/Flag a headline  
+`/status` – current phase  
+`/stats` – your stats  
+`/leaderboard` – top players
 
-**📊 PROGRESS TRACKING:**
-• `/stats` - Your personal game statistics
-• `/leaderboard` - Top misinformation detectives
+🎮 **Round Flow** (5 rounds)
+• Headline appears  
+• Discuss & use abilities  
+• Vote **Trust** or **Flag**  
+• Truth + tips revealed
 
-**📋 GENERAL COMMANDS:**
-• `/start` - Welcome message
-• `/help` - This detailed guide
+🔵 Truth Seekers win by finding all misinformers  
+🔴 Misinformers win by staying hidden
 
-**🎯 HOW TO WIN:**
-🔵 **Truth Seekers:** Identify & eliminate all misinformers
-🔴 **Misinformers:** Survive until you equal/outnumber truth team
-
-**📰 CORE GAMEPLAY:**
-Each round you'll see a **news headline**. Your job:
-• 🤔 **Analyze** - Is it real or fake news?
-• 💬 **Discuss** - Share thoughts with others
-• 🔍 **Investigate** - Use your role's special abilities
-• 🗳️ **Vote** - Trust/Flag the headline as real/fake
-• 📚 **Learn** - Get explanations & detection tips!
-
-**🎭 EXAMPLE ROLES:**
-📋 **Fact-Checker** - Investigate other players
-🔬 **Researcher** - Verify news sources
-📰 **Journalist** - Share insider knowledge
-😈 **Scammer** - Spread misinformation secretly
-🎭 **Deepfaker** - Create convincing lies
-🧍 **Normie** - Learn through discussion
-
-**🧠 EDUCATIONAL VALUE:**
-• Learn **real media literacy skills**
-• Practice **critical thinking**
-• Understand **bias detection**
-• Master **source verification**
-• Develop **fact-checking habits**
-
-**💡 PRO TIPS:**
-• Pay attention to **source credibility**
-• Look for **emotional language** (red flag!)
-• Check if claims seem **too extreme**
-• Ask **"Who benefits?"** from this story
-• Cross-reference with **known facts**
-
-**🎪 GAME FLOW:**
-1️⃣ **Role Assignment** - Get secret role privately
-2️⃣ **News Phase** - Headlines presented with Trust/Flag buttons
-3️⃣ **Resolution** - Learn the truth + educational content
-4️⃣ **Repeat** for 5 rounds total
-5️⃣ **Victory** - One team wins & everyone learns!
-
-Happy fact-checking! 🔍✨
+💡 **Tip:** Check sources, spot emotional language, stay skeptical!
     """
     
     try:
@@ -298,7 +259,6 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 'Fact Checker': user_stats.times_as_fact_checker,
                 'Scammer': user_stats.times_as_scammer,
                 'Influencer': user_stats.times_as_influencer,
-                'Drunk': user_stats.times_as_drunk,
                 'Normie': user_stats.times_as_normie
             }
             most_played_role = max(role_counts, key=role_counts.get) if max(role_counts.values()) > 0 else "None yet"
@@ -404,7 +364,7 @@ async def leaderboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         async with DatabaseSession() as session:
             # Top players by total wins
             result = await session.execute(
-                select(UserModel).order_by(UserModel.total_wins.desc(), UserModel.win_rate.desc()).limit(10)
+                select(UserModel).order_by(UserModel.total_wins.desc()).limit(10)
             )
             top_players = result.scalars().all()
 
@@ -418,7 +378,8 @@ async def leaderboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE
                 lines_wins = []
                 for idx, player in enumerate(top_players, start=1):
                     medal = medals[idx-1] if idx <= len(medals) else f"{idx}."
-                    username_display = player.username or f"Player {player.id}"
+                    # Escape underscores in usernames to avoid Markdown parsing issues
+                    username_display = (player.username or f"Player {player.id}").replace("_", "\\_")
                     lines_wins.append(
                         f"{medal} {username_display} — {player.total_wins} wins ({player.win_rate:.1f}% win rate)"
                     )
@@ -435,7 +396,8 @@ async def leaderboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE
                 lines_wr = []
                 for idx, (player, wr) in enumerate(top_wr, start=1):
                     medal = medals[idx-1] if idx <= len(medals) else f"{idx}."
-                    username_display = player.username or f"Player {player.id}"
+                    # Escape underscores in usernames to avoid Markdown parsing issues
+                    username_display = (player.username or f"Player {player.id}").replace("_", "\\_")
                     lines_wr.append(f"{medal} {username_display} — {wr*100:.1f}% win rate (\u2191 {player.total_games} games)")
 
                 # --- Top Accuracy (min 20 votes) ---
@@ -450,7 +412,8 @@ async def leaderboard_command(update: Update, context: ContextTypes.DEFAULT_TYPE
                 lines_acc = []
                 for idx, (player, acc) in enumerate(top_acc, start=1):
                     medal = medals[idx-1] if idx <= len(medals) else f"{idx}."
-                    username_display = player.username or f"Player {player.id}"
+                    # Escape underscores in usernames to avoid Markdown parsing issues
+                    username_display = (player.username or f"Player {player.id}").replace("_", "\\_")
                     lines_acc.append(f"{medal} {username_display} — {acc*100:.1f}% accuracy")
 
                 leaderboard_text = (

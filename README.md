@@ -13,7 +13,6 @@ Truth Wars combines social deduction with media literacy education in an engagin
   - **Fact Checker** (Truth Team) - Gets insider info, can snipe suspected Scammers
   - **Scammer** (Misinformation Team) - Spreads doubt, can snipe suspected Fact Checkers  
   - **Influencer** (Truth Team) - Double-weighted votes (2x voting power)
-  - **Drunk** (Neutral/Educational) - Rotates among Normies, shares media literacy tips
   - **Normies** (Various Teams) - Standard players, learn through gameplay
 - **Snipe abilities** for strategic shadow banning (Rounds 1-4 only)
 - **Educational content** seamlessly integrated through gameplay mechanics
