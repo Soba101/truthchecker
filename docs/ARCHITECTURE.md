@@ -322,8 +322,12 @@ bot/
 
 ---
 
-**Last Updated**: December 2024
+**Last Updated**: July 2025
 **Version**: 3.0 - Truth Wars Refined Implementation
 **Architecture**: Specialized Educational Social Deduction Game Bot
 
 **Note (2025-07):** The *Drunk* role has been removed from the codebase. Any references below remain for historical context only and do not reflect current gameplay. 
+
+## Local Setup & Environment
+
+- The bot requires a .env file with all necessary environment variables. If .env.example is not present, create .env manually using the variables described in the documentation and config.py. 

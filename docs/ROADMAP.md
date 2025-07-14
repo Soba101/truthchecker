@@ -1,5 +1,6 @@
 # 📅 Truth Wars – Telegram Bot Development Roadmap (1 Jun → 10 Jul 2025)
 
+> Note: This file is named ROADMAP.md. All references in documentation should use this filename for consistency.
 > Sprint-level plan for **Telegram bot development** over five weeks. Focus on bot functionality, commands, handlers, and Telegram-specific features.
 
 | Date | Version | Sprint / Codename | Key Deliverables |

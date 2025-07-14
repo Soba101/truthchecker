@@ -54,12 +54,10 @@ Truth Wars combines social deduction with media literacy education in an engagin
 truthchecker/
 ├── bot/                    # Main bot application
 │   ├── ai/                # AI headline generation & content curation
-│   │   ├── headline_generator.py
-│   │   └── ai_headline_seeder.py
+│   │   └── headline_generator.py
 │   ├── database/          # Async SQLAlchemy models & database management
 │   │   ├── models.py      # Complete game data models
-│   │   ├── database.py    # Database session management
-│   │   └── seed_data.py   # Initial data population
+│   │   └── database.py    # Database session management
 │   ├── game/              # Core game logic & state management
 │   │   ├── truth_wars_manager.py      # Central game orchestrator
 │   │   ├── refined_game_states.py     # Phase-based state machine
@@ -85,7 +83,12 @@ truthchecker/
 │   └── V3_IMPLEMENTATION.md         # Implementation details
 ├── tests/                 # Comprehensive test suite
 │   ├── test_example.py    # Basic functionality tests
-│   └── test_truthwars_v3.py         # Game logic tests
+│   ├── test_truthwars_v3.py         # Game logic tests
+│   ├── test_dm_mock.py
+│   ├── test_duplicate_and_swap.py
+│   ├── test_state_machine_actions.py
+│   ├── test_state_machine_branches.py
+│   └── test_state_machine_flow.py
 ├── deploy/                # Deployment configurations
 ├── run_bot.py             # Simple launcher script
 ├── requirements.txt       # Python dependencies
@@ -105,7 +108,7 @@ truthchecker/
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/truthchecker.git
+   git clone https://github.com/Soba101/truthchecker.git
    cd truthchecker
    ```
 
@@ -115,10 +118,8 @@ truthchecker/
    ```
 
 3. **Configure environment**
-   ```bash
-   cp .env.example .env
+   # If .env.example is not present, create a .env file manually with the required variables as described below.
    # Edit .env with your bot token and settings
-   ```
 
 4. **Start the bot**
    ```bash
@@ -207,17 +208,17 @@ Run the comprehensive test suite:
 # Run all tests with coverage
 pytest --cov=bot --cov-report=html
 
-# Run specific test categories
-pytest tests/test_game_logic.py          # Game mechanics
-pytest tests/test_database.py           # Database operations  
-pytest tests/test_handlers.py           # Command handlers
-pytest tests/test_integration.py        # End-to-end scenarios
+# Run specific test files
+pytest tests/test_example.py
+pytest tests/test_truthwars_v3.py
+pytest tests/test_dm_mock.py
+pytest tests/test_duplicate_and_swap.py
+pytest tests/test_state_machine_actions.py
+pytest tests/test_state_machine_branches.py
+pytest tests/test_state_machine_flow.py
 
 # Run with verbose output
 pytest -v --tb=short
-
-# Test database models specifically
-python -m pytest tests/test_models.py -v
 ```
 
 ## 📖 Documentation

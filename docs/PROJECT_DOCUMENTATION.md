@@ -61,13 +61,11 @@ truthchecker/
 │
 ├─ bot/                   # Main application package
 │  ├─ ai/                 # Headline generation helpers
-│  │  ├─ ai_headline_seeder.py   # Seeds default headline set
 │  │  └─ headline_generator.py   # OpenAI + DB fallback logic
 │  │
 │  ├─ database/           # Persistence layer
 │  │  ├─ database.py      # Async engine/session creator
-│  │  ├─ models.py        # SQLAlchemy models (Game, Player, Vote, etc.)
-│  │  └─ seed_data.py     # Seed fixtures for dev
+│  │  └─ models.py        # SQLAlchemy models (Game, Player, Vote, etc.)
 │  │
 │  ├─ game/               # Core gameplay logic
 │  │  ├─ roles.py                 # Role definitions & utilities
@@ -179,7 +177,7 @@ vote_weight = 2 if player.role == Role.INFLUENCER else 1
 ## 10. Running Locally
 ```bash
 pip install -r requirements.txt
-cp .env.example .env  # add TELEGRAM_BOT_TOKEN
+# If .env.example is not present, create a .env file manually with the required variables as described above.
 python run_bot.py     # launches polling bot
 ```
 
@@ -195,12 +193,24 @@ ngrok http 8000
 pytest                    # run all tests
 pytest -k "test_voting"   # filter by keyword
 pytest --cov=bot         # with coverage
+# Run specific test files
+pytest tests/test_example.py
+pytest tests/test_truthwars_v3.py
+pytest tests/test_dm_mock.py
+pytest tests/test_duplicate_and_swap.py
+pytest tests/test_state_machine_actions.py
+pytest tests/test_state_machine_branches.py
+pytest tests/test_state_machine_flow.py
 ```
 
 **Key Test Files:**
-- `tests/test_truthwars_v3.py` – Full 5-round game simulation
 - `tests/test_example.py` – Unit tests for core functions
-- Integration tests for role assignment, voting, snipe mechanics
+- `tests/test_truthwars_v3.py` – Full 5-round game simulation
+- `tests/test_dm_mock.py` – Direct message and mock tests
+- `tests/test_duplicate_and_swap.py` – Duplicate and swap logic tests
+- `tests/test_state_machine_actions.py` – State machine action tests
+- `tests/test_state_machine_branches.py` – State machine branch tests
+- `tests/test_state_machine_flow.py` – State machine flow tests
 
 ## 12. Deployment Checklist
 - [ ] **Environment Variables:** All required vars set in production
@@ -244,7 +254,7 @@ pytest --cov=bot         # with coverage
 - Change win condition threshold
 
 ## 16. Future Enhancements
-See `docs/TRUTH_WARS_ROADMAP.md` for detailed timeline.
+See `docs/ROADMAP.md` for detailed timeline.
 
 **Immediate Priorities:**
 - Multi-lobby support for concurrent games
@@ -262,4 +272,4 @@ See `docs/TRUTH_WARS_ROADMAP.md` for detailed timeline.
 
 ---
 
-*Document last updated: **July 2025** – update this line when you edit.* 
+*Document last updated: **July 2025**
