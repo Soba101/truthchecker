@@ -1684,17 +1684,29 @@ class TruthWarsManager:
             for player_id, player_data in game_session["players"].items():
                 username = _esc(player_data.get("username", f"Player {player_id}"))
                 role_info = game_session["player_roles"].get(player_id, {})
-                
                 # Get role name from role object
                 role = role_info.get("role")
                 role_name = role.name if role else "Unknown"
                 faction = _esc(role_info.get("faction", "Unknown"))
-                
-                status = "💀 Eliminated" if player_id in game_session["eliminated_players"] else "✅ Survived"
+                # --- Enhanced status logic ---
+                # 1. Eliminated
+                if player_id in game_session["eliminated_players"]:
+                    status = "💀 Eliminated"
+                # 2. Shadow banned (banned for >0 rounds)
+                elif game_session.get("shadow_banned_players", {}).get(player_id, 0) > 0:
+                    status = "🚫 Banned"
+                # 3. Ghost Viewer (0 RP)
+                elif game_session["player_reputation"].get(player_id, 3) == 0:
+                    status = "👻 Ghost Viewer"
+                # 4. Survived
+                else:
+                    status = "✅ Survived"
                 current_rp = game_session["player_reputation"].get(player_id, 3)
                 rp_status = "👻 Ghost Viewer" if current_rp == 0 else f"{current_rp} RP"
+                # Add explanatory comment for future maintainers
+                # Status order: Eliminated > Banned > Ghost Viewer > Survived
                 results_text += f"• {username}: {role_name} ({faction}) - {status} - {rp_status}\n"
-            
+
             # Show game statistics
             results_text += f"\n📊 **Game Stats:**\n"
             results_text += f"• Rounds played: {game_session['round_number']}\n"
